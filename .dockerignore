@@ -1,0 +1,7 @@
+build/
+build-*/
+.git/
+.vscode/
+.idea/
+*.o
+*.a
