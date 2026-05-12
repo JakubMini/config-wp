@@ -4,10 +4,15 @@
  *          IO channel type (DI, DO, TC, AI, AO, PCNT, PWM), the system-wide
  *          configuration struct, and the enums that constrain field values.
  *
- *          All struct fields use fixed-width <stdint.h> types and bool from
- *          <stdbool.h>. Every constrained field uses a typed enum, and every
- *          enum exposes a trailing _COUNT sentinel for cheap range checks
- *          at the API boundary.
+ *          Numeric struct fields use fixed-width <stdint.h> types and bool
+ *          from <stdbool.h>. Constrained fields are typed enums; ISO C
+ *          leaves the underlying integer type implementation-defined, so
+ *          static asserts at the bottom of this header pin every enum to
+ *          int-sized. That guards the on-flash ABI against options like
+ *          -fshort-enums silently shrinking a field.
+ *
+ *          Every enum exposes a trailing _COUNT sentinel for cheap range
+ *          checks at the API boundary.
  *
  *          No I/O. No allocation. No API. Just types.
  *****************************************************************************/
@@ -20,6 +25,7 @@ extern "C"
 {
 #endif
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -243,8 +249,45 @@ typedef struct
     uint16_t      heartbeat_ms;
     uint16_t      sync_window_us;
     nmt_startup_t nmt_startup;
-    uint16_t      producer_emcy_cob_id;
+    /* EMCY producer COB-ID. 0 = use the CANopen predefined-connection-set
+     * value, i.e. 0x80 + canopen_node_id, computed at NMT startup. A
+     * non-zero value is treated as an operator override and used verbatim.
+     * Stored separately from the SYNC COB-ID (always 0x80 by spec). */
+    uint16_t producer_emcy_cob_id;
 } system_config_t;
+
+/* ------------------------------------------------------------------------- */
+/* ABI-stability guards                                                      */
+/* ------------------------------------------------------------------------- */
+/*
+ * Pin every enum used as a struct field to int-sized. ISO C leaves the
+ * enum underlying integer type implementation-defined, and toolchain
+ * options like -fshort-enums can pack enums into the smallest type that
+ * fits. That would silently change struct layout, which is unacceptable
+ * for persisted records. Builds fail loudly here instead.
+ */
+static_assert(sizeof(fault_state_t) == sizeof(int),
+               "fault_state_t must be int-sized");
+static_assert(sizeof(di_polarity_t) == sizeof(int),
+               "di_polarity_t must be int-sized");
+static_assert(sizeof(do_polarity_t) == sizeof(int),
+               "do_polarity_t must be int-sized");
+static_assert(sizeof(tc_type_t) == sizeof(int), "tc_type_t must be int-sized");
+static_assert(sizeof(tc_unit_t) == sizeof(int), "tc_unit_t must be int-sized");
+static_assert(sizeof(ai_input_mode_t) == sizeof(int),
+               "ai_input_mode_t must be int-sized");
+static_assert(sizeof(ao_output_mode_t) == sizeof(int),
+               "ao_output_mode_t must be int-sized");
+static_assert(sizeof(pcnt_mode_t) == sizeof(int),
+               "pcnt_mode_t must be int-sized");
+static_assert(sizeof(pcnt_edge_t) == sizeof(int),
+               "pcnt_edge_t must be int-sized");
+static_assert(sizeof(can_bitrate_t) == sizeof(int),
+               "can_bitrate_t must be int-sized");
+static_assert(sizeof(nmt_startup_t) == sizeof(int),
+               "nmt_startup_t must be int-sized");
+static_assert(sizeof(io_domain_t) == sizeof(int),
+               "io_domain_t must be int-sized");
 
 #ifdef __cplusplus
 }

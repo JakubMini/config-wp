@@ -13,6 +13,9 @@
  *               record lands in the safest state.
  *****************************************************************************/
 
+#include <cstddef>
+#include <cstdint>
+
 #include <gtest/gtest.h>
 
 extern "C"
@@ -26,10 +29,11 @@ extern "C"
 /* sizeof checks                                                          */
 /* --------------------------------------------------------------------- */
 
-/* Exact host-side sizes (64-bit clang on macOS). Tight on purpose: if a
- * field is added the test fires, the budget gets re-checked, and the
- * number above gets bumped along with the on-flash impact noted in the
- * commit message. Cortex-M padding will differ; re-baseline on target. */
+/* Per-struct upper-bound budgets for the EEPROM allocation. Numbers were
+ * baselined against 64-bit clang on macOS; Cortex-M padding will differ
+ * (typically tighter, occasionally looser per struct). If a field is
+ * added and a struct grows past its ceiling the test fires; bump the
+ * ceiling consciously and note the on-flash impact in the commit. */
 TEST(Types, StructSizesWithinBudget)
 {
     EXPECT_LE(sizeof(di_config_t), 32u);
@@ -162,4 +166,11 @@ TEST(Defaults, SystemTableIsSane)
     EXPECT_LE(g_system_defaults.canopen_node_id, 127);
     EXPECT_LT((int)g_system_defaults.can_bitrate, (int)CAN_BITRATE_COUNT);
     EXPECT_LT((int)g_system_defaults.nmt_startup, (int)NMT_STARTUP_COUNT);
+
+    /* producer_emcy_cob_id: 0 (sentinel — derive at startup) OR a valid
+     * EMCY COB-ID, which per CiA 301 sits at 0x80 + node_id, i.e. >= 0x81.
+     * 0x80 itself is reserved for the SYNC message and would clash. */
+    const uint16_t cob = g_system_defaults.producer_emcy_cob_id;
+    EXPECT_TRUE(cob == 0 || cob >= 0x81)
+        << "producer_emcy_cob_id default must be 0 (derive) or >= 0x81";
 }

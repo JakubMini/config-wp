@@ -1,7 +1,9 @@
 /*****************************************************************************
  * Module:  config_defaults
- * Purpose: Static const factory-default tables for every IO type and the
- *          system configuration. See config_defaults.h for the contract.
+ * Purpose: Const factory-default tables for every IO type and the system
+ *          configuration. The tables have external linkage (declared
+ *          `extern const ...` in config_defaults.h) so the manager, codecs,
+ *          and tests all read the same definitions.
  *
  *          Defaults use the gcc/clang range-initialiser extension
  *
@@ -122,7 +124,9 @@ const system_config_t g_system_defaults = {
     .heartbeat_ms         = 1000,
     .sync_window_us       = 1000,
     .nmt_startup          = NMT_STARTUP_WAIT,
-    .producer_emcy_cob_id = 0x80,
+    /* 0 = derive 0x80 + node_id at startup per CiA 301. Stored as 0 so the
+     * value tracks any change to canopen_node_id without manual edits. */
+    .producer_emcy_cob_id = 0,
 };
 
 /* clang-format on */

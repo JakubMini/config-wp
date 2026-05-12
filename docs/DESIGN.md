@@ -58,7 +58,7 @@ use array range-init so they scale without touching each index by hand.
 | `ao_config_t`     | name, id, output_mode, slew_per_s, scale_num, scale_den, offset, fault_state, fault_value | 48 |
 | `pcnt_config_t`   | name, id, mode, edge, limit, reset_on_read | 36 |
 | `pwm_config_t`    | name, id, period_us, duty_permille, fault_state, fault_duty_permille | 36 |
-| `system_config_t` | canopen_node_id, can_bitrate, heartbeat_ms, sync_window_us, nmt_startup, producer_emcy_cob_id | 20 |
+| `system_config_t` | canopen_node_id, can_bitrate, heartbeat_ms, sync_window_us, nmt_startup, producer_emcy_cob_id (see below) | 20 |
 
 Host-side sizes are pinned by `tests/test_types.cpp` so silent growth
 trips a unit test before it overruns the EEPROM budget. Cortex-M numbers
@@ -126,6 +126,21 @@ EXPECT_LT(x.tc_type, TC_TYPE_COUNT);
 rather than hard-coding the value of the last legal entry. The unit
 tests use this; the setter validators will too.
 
+#### `producer_emcy_cob_id` uses a sentinel
+
+The CANopen predefined-connection-set default for the EMCY producer
+COB-ID (object 0x1014) is `0x80 + node_id`, not a fixed literal value. To
+keep that default consistent with `canopen_node_id` automatically:
+
+- `producer_emcy_cob_id == 0` is a **sentinel**: derive `0x80 + node_id` at
+  NMT startup.
+- Any non-zero value is an **operator override** and used verbatim.
+
+Storing the literal `0x80 + node_id` in the defaults table would silently
+go stale if the node id is changed later; the sentinel eliminates the
+coupling entirely. The same pattern generalises to the predefined PDO
+COB-IDs (`0x180 + node_id` for TPDO1, etc.) when those fields land.
+
 #### `io_domain_t`
 
 A separate top-level enum that addresses an IO record by *type*:
@@ -146,11 +161,12 @@ written by a newer firmware revision.
 
 ### Factory defaults
 
-`config_defaults.{h,c}` holds one `static const` table per IO type plus
-`g_system_defaults`. `static const` keeps the tables in flash on the
-target (not RAM), and every field is initialised explicitly so the array
-contents survive any future compiler aggressiveness around partial
-initialisation.
+`config_defaults.{h,c}` holds one `const` table per IO type plus
+`g_system_defaults`. Tables have external linkage (declared `extern const`
+in the header), so every translation unit reads the same definition. The
+`const` qualifier keeps them in flash on the target (not RAM), and every
+field is initialised explicitly so the array contents survive any future
+compiler aggressiveness around partial initialisation.
 
 Tables are populated using the gcc/clang range-init extension:
 
@@ -201,8 +217,10 @@ duty, CAN 500 kbit/s, CANopen node 1, NMT wait-for-command on boot.
 
 `tests/test_types.cpp` covers four categories, 12 tests total:
 
-1. **Sizeof bounds** — strict equality-bound on each struct against its
-   current host-side size.
+1. **Sizeof bounds** — `EXPECT_LE` ceiling on each struct, baselined to
+   the current host-side size. Crossing the ceiling fires the test;
+   raising it is a conscious act (bump the number, note the on-flash
+   impact in the commit). Cortex-M numbers will differ in padding.
 2. **Enum range** — every `_COUNT` sentinel must be positive.
 3. **Defaults sanity** — every entry in every defaults table has a
    null-terminated name, in-range enum values, non-zero `scale_den` for
