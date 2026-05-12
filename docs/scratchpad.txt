@@ -1,5 +1,6 @@
 problems to solve:
 
+DONE!
 a - general layout of various I/O pins, their functions, class/struct to hold those (data model)
     - DI: name(16), id, debounce, fault state (hold/0/1)
     - DO: name, id, fault state (hold/off/on)
