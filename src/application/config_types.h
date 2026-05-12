@@ -267,27 +267,27 @@ typedef struct
  * for persisted records. Builds fail loudly here instead.
  */
 static_assert(sizeof(fault_state_t) == sizeof(int),
-               "fault_state_t must be int-sized");
+              "fault_state_t must be int-sized");
 static_assert(sizeof(di_polarity_t) == sizeof(int),
-               "di_polarity_t must be int-sized");
+              "di_polarity_t must be int-sized");
 static_assert(sizeof(do_polarity_t) == sizeof(int),
-               "do_polarity_t must be int-sized");
+              "do_polarity_t must be int-sized");
 static_assert(sizeof(tc_type_t) == sizeof(int), "tc_type_t must be int-sized");
 static_assert(sizeof(tc_unit_t) == sizeof(int), "tc_unit_t must be int-sized");
 static_assert(sizeof(ai_input_mode_t) == sizeof(int),
-               "ai_input_mode_t must be int-sized");
+              "ai_input_mode_t must be int-sized");
 static_assert(sizeof(ao_output_mode_t) == sizeof(int),
-               "ao_output_mode_t must be int-sized");
+              "ao_output_mode_t must be int-sized");
 static_assert(sizeof(pcnt_mode_t) == sizeof(int),
-               "pcnt_mode_t must be int-sized");
+              "pcnt_mode_t must be int-sized");
 static_assert(sizeof(pcnt_edge_t) == sizeof(int),
-               "pcnt_edge_t must be int-sized");
+              "pcnt_edge_t must be int-sized");
 static_assert(sizeof(can_bitrate_t) == sizeof(int),
-               "can_bitrate_t must be int-sized");
+              "can_bitrate_t must be int-sized");
 static_assert(sizeof(nmt_startup_t) == sizeof(int),
-               "nmt_startup_t must be int-sized");
+              "nmt_startup_t must be int-sized");
 static_assert(sizeof(io_domain_t) == sizeof(int),
-               "io_domain_t must be int-sized");
+              "io_domain_t must be int-sized");
 
 #ifdef __cplusplus
 }
