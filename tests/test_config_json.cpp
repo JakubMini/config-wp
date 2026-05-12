@@ -220,7 +220,7 @@ TEST_F(JsonTest, NullJsonReturnsInvalid)
 
 TEST_F(JsonTest, MissingChannelFieldRejected)
 {
-    const char * json = "{\"di\": [ {\"debounce_ms\": 30} ]}";
+    const char *           json = "{\"di\": [ {\"debounce_ms\": 30} ]}";
     config_import_report_t r;
     EXPECT_EQ(config_import_json(json, std::strlen(json), &r), CONFIG_OK);
     EXPECT_EQ(r.accepted, 0u);
@@ -243,8 +243,7 @@ TEST_F(JsonTest, NonIntegerChannelRejected)
 TEST_F(JsonTest, ChannelOutOfRangeRejected)
 {
     /* CONFIG_NUM_DI is 16; channel 99 is out of range. */
-    const char * json
-        = "{\"di\": [ {\"channel\": 99, \"debounce_ms\": 30} ]}";
+    const char * json = "{\"di\": [ {\"channel\": 99, \"debounce_ms\": 30} ]}";
     config_import_report_t r;
     EXPECT_EQ(config_import_json(json, std::strlen(json), &r), CONFIG_OK);
     EXPECT_EQ(r.accepted, 0u);
@@ -309,8 +308,7 @@ TEST_F(JsonTest, PartialUpdateLeavesOtherChannelsAlone)
 
     /* One-element JSON addresses channel 5 only. No leading nulls
      * needed — order is irrelevant under explicit addressing. */
-    const char * json
-        = "{\"di\": [{\"channel\": 5, \"debounce_ms\": 99}]}";
+    const char * json = "{\"di\": [{\"channel\": 5, \"debounce_ms\": 99}]}";
 
     config_import_report_t r;
     ASSERT_EQ(config_import_json(json, std::strlen(json), &r), CONFIG_OK);
@@ -340,8 +338,7 @@ TEST_F(JsonTest, MissingFieldKeepsCachedValue)
     ASSERT_EQ(config_set_di(2, &in), CONFIG_OK);
 
     /* JSON updates id only; name and debounce_ms must survive. */
-    const char * json
-        = "{\"di\": [{\"channel\": 2, \"id\": 5}]}";
+    const char *           json = "{\"di\": [{\"channel\": 2, \"id\": 5}]}";
     config_import_report_t r;
     ASSERT_EQ(config_import_json(json, std::strlen(json), &r), CONFIG_OK);
 

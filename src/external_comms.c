@@ -43,13 +43,14 @@ static void
 ext_log_report (config_status_t st, const config_import_report_t * rep)
 {
     assert(rep != NULL);
-    printf("[ext] config_import_json -> %s "
-           "(accepted=%u rejected=%u unknown_keys=%u malformed=%u)\n",
-           config_print_status(st),
-           (unsigned)rep->accepted,
-           (unsigned)rep->rejected,
-           (unsigned)rep->unknown_keys,
-           (unsigned)rep->malformed);
+    printf(
+        "[ext] config_import_json -> %s "
+        "(accepted=%u rejected=%u unknown_keys=%u malformed=%u)\n",
+        config_print_status(st),
+        (unsigned)rep->accepted,
+        (unsigned)rep->rejected,
+        (unsigned)rep->unknown_keys,
+        (unsigned)rep->malformed);
     if (rep->first_error[0] != '\0')
     {
         printf("[ext] first_error: %s\n", rep->first_error);
@@ -74,8 +75,8 @@ ext_task (void * pv)
             continue;
         }
 
-        config_import_report_t rep   = { 0 };
-        config_status_t        st    = config_import_json(msg.json, msg.len, &rep);
+        config_import_report_t rep = { 0 };
+        config_status_t        st = config_import_json(msg.json, msg.len, &rep);
         ext_log_report(st, &rep);
     }
 }

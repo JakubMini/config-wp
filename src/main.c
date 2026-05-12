@@ -94,8 +94,7 @@ prvAppTask (void * pvParameters)
     config_print_system("after reset");
 
     /* --- json patch via external comms task --- */
-    config_print_stage(
-        "stage 5: submit JSON patch via external comms thread");
+    config_print_stage("stage 5: submit JSON patch via external comms thread");
 
     /* Operator-style patch: one record, addressed by channel, carrying
      * only the field that changes. The buffer lives in BSS so it stays
@@ -124,15 +123,16 @@ prvAppTask (void * pvParameters)
     /* Persistence is a separate concern from import. The comms task
      * never auto-saves — we commit explicitly after a batch of patches. */
     st = config_save();
-    printf("\n[cfg] config_save -> %s "
-           "(committed external patches to flash)\n",
-           config_print_status(st));
+    printf(
+        "\n[cfg] config_save -> %s "
+        "(committed external patches to flash)\n",
+        config_print_status(st));
 
     /* --- json export --- */
     config_print_stage("stage 6: export current cache as JSON");
 
-    static char   export_buf[8192];
-    size_t        written = 0;
+    static char export_buf[8192];
+    size_t      written = 0;
     st = config_export_json(export_buf, sizeof(export_buf), &written);
     printf("[json] config_export_json -> %s (%zu bytes)\n",
            config_print_status(st),

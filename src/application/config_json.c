@@ -862,97 +862,95 @@ patch_system_record (cJSON * obj, system_config_t * s)
  * no-ops to keep operator JSON forgiving.
  * =================================================================== */
 
-#define APPLY_ARRAY(arr_name, ctype, count_macro, patcher, getter, setter) \
-    do                                                                     \
-    {                                                                      \
-        cJSON * _arr = cJSON_GetObjectItemCaseSensitive(root, arr_name);   \
-        if (_arr == NULL || cJSON_IsNull(_arr))                            \
-        {                                                                  \
-            break;                                                         \
-        }                                                                  \
-        if (!cJSON_IsArray(_arr))                                          \
-        {                                                                  \
-            report_first_error(report, "%s: not an array", arr_name);     \
-            report->malformed++;                                           \
-            break;                                                         \
-        }                                                                  \
-        uint32_t  _seen = 0u;                                              \
-        const int _n    = cJSON_GetArraySize(_arr);                        \
-        for (int _i = 0; _i < _n; ++_i)                                    \
-        {                                                                  \
-            cJSON * _item = cJSON_GetArrayItem(_arr, _i);                  \
-            if (_item == NULL || cJSON_IsNull(_item))                      \
-            {                                                              \
-                continue;                                                  \
-            }                                                              \
-            if (!cJSON_IsObject(_item))                                    \
-            {                                                              \
-                report_first_error(                                        \
-                    report, "%s[%d]: not an object", arr_name, _i);        \
-                report->malformed++;                                       \
-                continue;                                                  \
-            }                                                              \
-            cJSON * _ch                                                    \
-                = cJSON_GetObjectItemCaseSensitive(_item, "channel");      \
-            if (_ch == NULL || !cJSON_IsNumber(_ch))                       \
-            {                                                              \
-                report_first_error(                                        \
-                    report,                                                \
-                    "%s[%d]: missing or non-integer 'channel'",            \
-                    arr_name,                                              \
-                    _i);                                                   \
-                report->rejected++;                                        \
-                continue;                                                  \
-            }                                                              \
-            const double _chv = _ch->valuedouble;                          \
-            if (_chv < 0.0 || _chv >= (double)(count_macro))               \
-            {                                                              \
-                report_first_error(report,                                 \
-                                   "%s[%d]: channel %d out of range",     \
-                                   arr_name,                               \
-                                   _i,                                     \
-                                   (int)_chv);                             \
-                report->rejected++;                                        \
-                continue;                                                  \
-            }                                                              \
-            const uint8_t _idx = (uint8_t)_chv;                            \
-            if ((_seen & (1u << _idx)) != 0u)                              \
-            {                                                              \
-                report_first_error(report,                                 \
-                                   "%s[%d]: duplicate channel %u",        \
-                                   arr_name,                               \
-                                   _i,                                     \
-                                   (unsigned)_idx);                        \
-                report->rejected++;                                        \
-                continue;                                                  \
-            }                                                              \
-            _seen |= (1u << _idx);                                         \
-            ctype _v;                                                      \
-            if (getter(_idx, &_v) != CONFIG_OK)                            \
-            {                                                              \
-                report->rejected++;                                        \
-                continue;                                                  \
-            }                                                              \
-            if (!patcher(_item, &_v))                                      \
-            {                                                              \
-                report_first_error(report,                                 \
-                                   "%s[ch=%u]: malformed field",          \
-                                   arr_name,                               \
-                                   (unsigned)_idx);                        \
-                report->rejected++;                                        \
-                continue;                                                  \
-            }                                                              \
-            if (setter(_idx, &_v) != CONFIG_OK)                            \
-            {                                                              \
-                report_first_error(report,                                 \
-                                   "%s[ch=%u]: setter rejected",          \
-                                   arr_name,                               \
-                                   (unsigned)_idx);                        \
-                report->rejected++;                                        \
-                continue;                                                  \
-            }                                                              \
-            report->accepted++;                                            \
-        }                                                                  \
+#define APPLY_ARRAY(arr_name, ctype, count_macro, patcher, getter, setter)     \
+    do                                                                         \
+    {                                                                          \
+        cJSON * _arr = cJSON_GetObjectItemCaseSensitive(root, arr_name);       \
+        if (_arr == NULL || cJSON_IsNull(_arr))                                \
+        {                                                                      \
+            break;                                                             \
+        }                                                                      \
+        if (!cJSON_IsArray(_arr))                                              \
+        {                                                                      \
+            report_first_error(report, "%s: not an array", arr_name);          \
+            report->malformed++;                                               \
+            break;                                                             \
+        }                                                                      \
+        uint32_t  _seen = 0u;                                                  \
+        const int _n    = cJSON_GetArraySize(_arr);                            \
+        for (int _i = 0; _i < _n; ++_i)                                        \
+        {                                                                      \
+            cJSON * _item = cJSON_GetArrayItem(_arr, _i);                      \
+            if (_item == NULL || cJSON_IsNull(_item))                          \
+            {                                                                  \
+                continue;                                                      \
+            }                                                                  \
+            if (!cJSON_IsObject(_item))                                        \
+            {                                                                  \
+                report_first_error(                                            \
+                    report, "%s[%d]: not an object", arr_name, _i);            \
+                report->malformed++;                                           \
+                continue;                                                      \
+            }                                                                  \
+            cJSON * _ch = cJSON_GetObjectItemCaseSensitive(_item, "channel");  \
+            if (_ch == NULL || !cJSON_IsNumber(_ch))                           \
+            {                                                                  \
+                report_first_error(report,                                     \
+                                   "%s[%d]: missing or non-integer 'channel'", \
+                                   arr_name,                                   \
+                                   _i);                                        \
+                report->rejected++;                                            \
+                continue;                                                      \
+            }                                                                  \
+            const double _chv = _ch->valuedouble;                              \
+            if (_chv < 0.0 || _chv >= (double)(count_macro))                   \
+            {                                                                  \
+                report_first_error(report,                                     \
+                                   "%s[%d]: channel %d out of range",          \
+                                   arr_name,                                   \
+                                   _i,                                         \
+                                   (int)_chv);                                 \
+                report->rejected++;                                            \
+                continue;                                                      \
+            }                                                                  \
+            const uint8_t _idx = (uint8_t)_chv;                                \
+            if ((_seen & (1u << _idx)) != 0u)                                  \
+            {                                                                  \
+                report_first_error(report,                                     \
+                                   "%s[%d]: duplicate channel %u",             \
+                                   arr_name,                                   \
+                                   _i,                                         \
+                                   (unsigned)_idx);                            \
+                report->rejected++;                                            \
+                continue;                                                      \
+            }                                                                  \
+            _seen |= (1u << _idx);                                             \
+            ctype _v;                                                          \
+            if (getter(_idx, &_v) != CONFIG_OK)                                \
+            {                                                                  \
+                report->rejected++;                                            \
+                continue;                                                      \
+            }                                                                  \
+            if (!patcher(_item, &_v))                                          \
+            {                                                                  \
+                report_first_error(report,                                     \
+                                   "%s[ch=%u]: malformed field",               \
+                                   arr_name,                                   \
+                                   (unsigned)_idx);                            \
+                report->rejected++;                                            \
+                continue;                                                      \
+            }                                                                  \
+            if (setter(_idx, &_v) != CONFIG_OK)                                \
+            {                                                                  \
+                report_first_error(report,                                     \
+                                   "%s[ch=%u]: setter rejected",               \
+                                   arr_name,                                   \
+                                   (unsigned)_idx);                            \
+                report->rejected++;                                            \
+                continue;                                                      \
+            }                                                                  \
+            report->accepted++;                                                \
+        }                                                                      \
     } while (0)
 
 /* ===================================================================
