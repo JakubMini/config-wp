@@ -56,6 +56,7 @@ f - forward compat (easy to get wrong)
       those fields MUST survive. lots of impls drop them silently. dont do that.
     - both directions need explicit tests
 
+DONE!
 g - piecewise vs monolithic updates
     - tlv records makes this fall out for free
     - piecewise = rewrite one tag, monolithic = rewrite whole blob
