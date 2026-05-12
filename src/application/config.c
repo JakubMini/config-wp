@@ -619,15 +619,22 @@ config_init (void)
     crc32_init();
     if (!config_lock_create())
     {
-        return CONFIG_ERR_NOT_INITIALISED;
+        /* Mutex creation failed — distinct from "API called before init"
+         * (CONFIG_ERR_NOT_INITIALISED) so callers can tell them apart. */
+        return CONFIG_ERR_INTERNAL;
     }
 
-    /* Defaults first, so even a slot-read failure leaves us with a
-     * working cache. */
+    /* Defaults + slot decode happen while s_initialised is still false.
+     * That keeps every public getter/setter rejected with
+     * CONFIG_ERR_NOT_INITIALISED until init finishes — so no other task
+     * can observe a half-loaded cache, and decode_blob can't be raced by
+     * a concurrent setter. The lock is still taken for the brief windows
+     * we mutate the cache so this module's own internal helpers stay
+     * concurrency-safe. Caller contract: config_init is called from one
+     * thread at startup. */
     config_lock_take();
     load_defaults_locked();
     config_lock_give();
-    s_initialised = true;
 
     slot_id_t     id  = SLOT_NONE;
     size_t        len = 0;
@@ -635,18 +642,26 @@ config_init (void)
         = slot_pick_active(&id, s_blob_buf, sizeof(s_blob_buf), &len);
     (void)id;
 
+    config_status_t result = CONFIG_OK;
     if (st == SLOT_OK)
     {
         config_lock_take();
-        const config_status_t cs = decode_blob_locked(s_blob_buf, len);
+        result = decode_blob_locked(s_blob_buf, len);
         config_lock_give();
-        return cs;
     }
-    if (st == SLOT_ERR_NO_VALID)
+    else if (st == SLOT_ERR_NO_VALID)
     {
-        return CONFIG_OK; /* blank EEPROM — defaults stand */
+        result = CONFIG_OK; /* blank EEPROM — defaults stand */
     }
-    return CONFIG_ERR_STORAGE;
+    else
+    {
+        result = CONFIG_ERR_STORAGE;
+    }
+
+    /* Cache is now fully populated (defaults + any overlay from the
+     * loaded slot). Allow public API access. */
+    s_initialised = true;
+    return result;
 }
 
 void

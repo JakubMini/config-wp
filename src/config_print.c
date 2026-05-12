@@ -25,6 +25,8 @@ config_print_status (config_status_t s)
             return "ERR_CODEC";
         case CONFIG_ERR_TOO_LARGE:
             return "ERR_TOO_LARGE";
+        case CONFIG_ERR_INTERNAL:
+            return "ERR_INTERNAL";
         default:
             return "?";
     }
@@ -140,7 +142,12 @@ config_print_system (const char * label)
     printf("[cfg]   %-23s: %s\n",
            "nmt_startup",
            prvNmtStartupStr(sys.nmt_startup));
-    printf("[cfg]   %-23s: stored=0x%08x  effective=0x%03x  (%s)\n",
+    /* Both stored and effective printed as 8-hex-digit u32: the effective
+     * value can carry the full OD 0x1014 layout (bit 31 disabled-flag, bit
+     * 30 29-bit-frame flag, bits 28..0 COB-ID), so a narrower format would
+     * misrepresent override values like 0x80000081 (disabled at COB 0x81)
+     * or 0x40000123 (29-bit COB-ID). */
+    printf("[cfg]   %-23s: stored=0x%08x  effective=0x%08x  (%s)\n",
            "emcy_cob_id (0x1014)",
            (unsigned)emcy_stored,
            (unsigned)emcy_effective,

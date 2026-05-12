@@ -6,7 +6,10 @@
  *          Lives outside the `application` library on purpose — only the
  *          executable links it, so unit tests don't pull in stdio noise.
  *
- *          No state. No allocation. Safe to call from any task.
+ *          No state. No allocation. NOT thread-safe — the underlying
+ *          printf is not guaranteed to be re-entrant and concurrent
+ *          calls can interleave output. Either call from a single
+ *          logging task or serialise externally.
  *****************************************************************************/
 
 #ifndef CONFIG_PRINT_H

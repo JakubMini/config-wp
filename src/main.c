@@ -24,7 +24,15 @@ prvAppTask (void * pvParameters)
     (void)pvParameters;
 
     config_print_stage("stage 1: storage + config manager init");
-    storage_init();
+    storage_status_t sst = storage_init();
+    printf("[drv] storage_init -> %s\n", sst == STORAGE_OK ? "OK" : "ERR");
+    if (sst != STORAGE_OK)
+    {
+        /* No storage means config_init will fall back to defaults via the
+         * SLOT_ERR_STORAGE path. Demo continues so we can still show the
+         * defaults flow, but a real device would probably halt or fault. */
+        printf("[drv] continuing on defaults — slot reads will fail\n");
+    }
     config_status_t st = config_init();
     printf("[cfg] config_init -> %s\n", config_print_status(st));
 

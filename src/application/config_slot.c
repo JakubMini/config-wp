@@ -38,8 +38,20 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define SLOT_MAGIC      ((uint32_t)0xC0FC0FCAu)
-#define SLOT_FORMAT_VER ((uint16_t)1u)
+#define SLOT_MAGIC ((uint32_t)0xC0FC0FCAu)
+/* SLOT_FORMAT_VER history:
+ *   1 — initial (DI/DO/TC/AI/AO/PCNT/PWM + system v1 with u16 sync_window_us
+ *       and u16 producer_emcy_cob_id)
+ *   2 — system record fields widened to OD widths (u32 sync_window_us,
+ *       u32 producer_emcy_cob_id); SYSTEM wire size 9 -> 13.
+ *
+ * On a firmware update that bumps this number, existing slots are
+ * rejected by slot_header_looks_sane() and config_init falls back to
+ * factory defaults. That's the migration story for incompatible
+ * wire-format changes: bump the version, lose the old config, document
+ * the upgrade impact. A graceful migration path (accept old length AND
+ * widen on decode) is documented in DESIGN.md as a future-work option. */
+#define SLOT_FORMAT_VER ((uint16_t)2u)
 /* tuned so 2*(header+payload) == 4096; exposed publicly as
  * SLOT_PAYLOAD_MAX_BYTES via the header. */
 #define SLOT_PAYLOAD_MAX  ((size_t)SLOT_PAYLOAD_MAX_BYTES)

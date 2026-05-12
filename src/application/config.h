@@ -47,6 +47,7 @@ typedef enum
     CONFIG_ERR_STORAGE,         /* slot_write / slot_pick_active failed */
     CONFIG_ERR_CODEC,           /* tlv encode/decode error */
     CONFIG_ERR_TOO_LARGE,       /* encoded cache exceeds slot_max_payload */
+    CONFIG_ERR_INTERNAL, /* manager internal failure (mutex create, etc.) */
 } config_status_t;
 
 /* ---- Lifecycle ---------------------------------------------------- */
@@ -57,12 +58,20 @@ typedef enum
  * defaults. Unknown TLV records in the loaded blob are stashed for
  * verbatim re-emission on the next save.
  *
- * Returns CONFIG_OK on success. CONFIG_ERR_STORAGE if a storage read
- * failed during slot probing — the cache is still populated with
- * defaults so the device can run.
+ * Public API stays gated until decode completes — until then every
+ * getter/setter returns CONFIG_ERR_NOT_INITIALISED, so no other task
+ * can observe a half-loaded cache.
+ *
+ * Returns:
+ *   CONFIG_OK                  success or blank EEPROM (defaults loaded)
+ *   CONFIG_ERR_INTERNAL        mutex create failed (lock primitive)
+ *   CONFIG_ERR_STORAGE         storage I/O failed; defaults loaded so
+ *                              the device can still run in a degraded mode
+ *   CONFIG_ERR_CODEC           slot bytes failed to decode; defaults loaded
  *
  * Idempotent: subsequent calls return CONFIG_OK without reloading.
- * Use config_deinit() to force a re-load. */
+ * Use config_deinit() to force a re-load. Caller contract: config_init
+ * is called from one thread at startup. */
 config_status_t config_init (void);
 
 /* Tear down manager state. Primarily for tests; production code rarely

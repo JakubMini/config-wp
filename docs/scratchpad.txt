@@ -32,6 +32,7 @@ c - safe storage, conflict free
     - storage.c is memcpy stub now, real hw = spi eeprom (M95M02 or similar)
     - crc32 iso-hdlc (zlib one), ~1kb table, runtime built at init
 
+
 d - architercture - non-blocking, threadsafe
     - one mutex around the in-ram cache, all getters + setters take it
     - hot readers (io thread) hit ram, never block on storage
@@ -49,6 +50,7 @@ e - CiA 401 stuff
     - LSS slave - maybe, not strictly needed for the exercise
     - heartbeat producer + emcy producer required for cia 301 compliance
 
+DONE!
 f - forward compat (easy to get wrong)
     - old fw + new config -> skip unknown tags
     - new fw + old config -> apply defaults for new fields
@@ -85,6 +87,7 @@ g3 - PDO gaps (NOT in scope, writeup roadmap item)
     - 0x1000, 0x1008..0x100A, 0x1018 device-info objects can be
       compile-time constants, not cache fields
 
+DONE!
 h - validation / error detection
     - per setter: range check every field
     - on load: magic + format_ver + crc + length sanity
@@ -92,6 +95,7 @@ h - validation / error detection
     - name len bounded, null term enforced
     - error codes explicit, not just OK/FAIL
 
+DONE!
 i - factory defaults
     - static const table per type, in firmware
     - used on: fresh eeprom, reset_defaults() call, new fields after fw upgrade
@@ -135,7 +139,7 @@ m - things i'm NOT doing this round
     - no LSS over CAN (not mandated)
     - no DCF text export (binary + json wrapper is enough)
     - no fw update verification (bootloader does it)
-    - no MISRA-C pass (would need extra 2 weeks)
+    - no MISRA-C pass or any other form of code compliance (would need extra 2 weeks)
 
 n - architercture critique (for writeup)
     - power-of-10 rule 9 (no fn ptrs) vs fw-arch note "swap source via fn ptr".

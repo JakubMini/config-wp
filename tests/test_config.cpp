@@ -274,10 +274,11 @@ TEST_F(ConfigTest, SaveAndReloadPersistsAcrossInit)
 
     ASSERT_EQ(config_save(), CONFIG_OK);
 
-    /* Simulate a reboot: tear down the manager but leave the storage
-     * stub's bytes intact. The memcpy stub holds state across init
-     * unless storage_init wipes it — we deliberately re-init the stub
-     * so the test reflects what a real device sees on power cycle. */
+    /* Simulate a reboot: tear down the manager but DO NOT call
+     * storage_init — that would wipe the memcpy stub's bytes and lose
+     * the slot we just wrote. Re-initing only the manager mirrors what
+     * a real power cycle looks like (storage persists, manager state
+     * doesn't). */
     config_deinit();
     ASSERT_EQ(config_init(), CONFIG_OK);
 
