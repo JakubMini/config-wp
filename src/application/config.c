@@ -710,7 +710,14 @@ config_save (void)
     /* slot_write runs OUTSIDE the lock. Caller contract: config_save
      * is called from a single thread (the EEPROM Manager in the
      * firmware architecture). s_blob_buf is owned by the in-flight
-     * save until slot_write returns. */
+     * save until slot_write returns.
+     *
+     * Priority-inversion guard: a refactor that left the cache mutex
+     * held across this storage I/O would stall the high-priority IO
+     * task for the duration of the SPI transaction (ms+). Assert that
+     * we don't hold it before crossing the boundary. */
+    assert(!config_lock_is_held_by_current_thread()
+           && "config_lock must be released before storage I/O");
     const slot_status_t ss = slot_write(s_blob_buf, blob_len);
     return (ss == SLOT_OK) ? CONFIG_OK : CONFIG_ERR_STORAGE;
 }

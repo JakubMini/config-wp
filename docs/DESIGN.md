@@ -5,6 +5,105 @@ each layer goes in.
 
 ---
 
+## Diagrams
+
+High-level views of the configuration manager. Detail lives in the
+per-layer sections below.
+
+### Architecture — layer stack
+
+```mermaid
+flowchart TD
+    App["Application / IO tasks"]
+    Mgr["config.{h,c}<br/>public API + RAM cache + mutex"]
+    Codec["config_codec.{h,c}<br/>typed records ↔ bytes"]
+    TLV["tlv.{h,c}<br/>generic TLV iterator / writer"]
+    Slot["config_slot.{h,c}<br/>A/B slot protocol + CRC"]
+    CRC["crc32.{h,c}"]
+    Drv["drivers/storage.{h,c}<br/>EEPROM byte I/O"]
+    Lock["config_lock.h<br/>FreeRTOS | pthread impl"]
+    HW[("EEPROM")]
+
+    App -->|get/set/save| Mgr
+    Mgr --> Codec
+    Mgr -.-> Lock
+    Codec --> TLV
+    Mgr --> Slot
+    Slot --> CRC
+    Slot --> Drv
+    Drv --> HW
+```
+
+### Data flow — boot (`config_init`)
+
+```mermaid
+flowchart TD
+    Start(["config_init()"]) --> CrcInit["crc32_init<br/>config_lock_create"]
+    CrcInit --> LoadDef["copy factory defaults<br/>into s_cache"]
+    LoadDef --> Pick["slot_pick_active()"]
+    Pick -->|"SLOT_OK"| Decode["TLV decode payload"]
+    Pick -->|"NO_VALID"| OkDef(["return OK<br/>(defaults stand)"])
+    Pick -->|"STORAGE"| ErrSt(["return ERR_STORAGE<br/>(defaults stand)"])
+    Decode --> Classify{"record tag<br/>known?"}
+    Classify -->|"yes + in range"| Cache["write into s_cache"]
+    Classify -->|"unknown / OOR"| Unk["append raw bytes<br/>to s_unknown[]"]
+    Cache --> Next{"more records?"}
+    Unk --> Next
+    Next -->|"yes"| Classify
+    Next -->|"no"| OkLoaded(["return OK"])
+```
+
+### Data flow — `config_save`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Caller
+    participant M as config manager
+    participant L as mutex
+    participant K as codec / TLV
+    participant S as slot layer
+    participant E as EEPROM
+
+    C->>M: config_save()
+    M->>L: take
+    M->>K: encode s_cache into s_blob_buf
+    M->>K: append s_unknown[] verbatim
+    M->>L: give
+    Note over M,L: mutex NEVER held across slot_write
+    M->>S: slot_write(blob, len)
+    S->>S: pick inactive slot<br/>seq = max(sane)+1
+    S->>E: write payload
+    S->>E: write header (commit)
+    S-->>M: SLOT_OK / ERR
+    M-->>C: CONFIG_OK / ERR
+```
+
+### State flow — A/B slot lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Blank: fresh device
+    Blank --> Writing: slot_write targets this slot
+    Valid --> Writing: next save targets inactive slot
+    Writing --> PayloadTorn: power loss mid-payload
+    Writing --> HeaderTorn: power loss mid-header
+    Writing --> Valid: header committed
+    PayloadTorn --> Rejected: CRC mismatch on boot
+    HeaderTorn --> Rejected: header sanity / CRC fail
+    Rejected --> Writing: reused as inactive target
+    Valid --> Active: higher seq than peer
+    Valid --> Standby: lower seq than peer
+    Active --> Standby: peer overtakes on next save
+    Standby --> Active: this slot overtakes on next save
+```
+
+Boot picks `Active` if present; otherwise loads defaults. The other
+slot is always either `Standby`, `Rejected`, or `Blank` — at least one
+good slot survives any single power-loss event.
+
+---
+
 ## Data model
 
 Single source of truth for what configuration looks like in RAM: one
