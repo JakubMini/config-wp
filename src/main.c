@@ -7,6 +7,7 @@
 #include "task.h"
 
 #include "application/config.h"
+#include "application/config_json.h"
 #include "drivers/storage.h"
 
 #include "config_print.h"
@@ -90,6 +91,51 @@ prvAppTask (void * pvParameters)
 
     config_print_di(0);
     config_print_system("after reset");
+
+    /* --- json partial-update --- */
+    config_print_stage("stage 5: import a partial JSON patch (bump di[9] debounce)");
+
+    /* Operator-style patch: one record, addressed by channel, carrying
+     * only the field that changes. Everything else — other DI channels,
+     * every other IO array, the system block — is left untouched. */
+    static const char patch_json[]
+        = "{\n"
+          "  \"//note\": \"demo: bump di[ch=9] debounce only\",\n"
+          "  \"di\": [ { \"channel\": 9, \"debounce_ms\": 100 } ]\n"
+          "}\n";
+
+    config_print_di(9);
+
+    config_import_report_t rep;
+    st = config_import_json(patch_json, sizeof(patch_json) - 1U, &rep);
+    printf("[json] config_import_json -> %s "
+           "(accepted=%u rejected=%u unknown_keys=%u malformed=%u)\n",
+           config_print_status(st),
+           (unsigned)rep.accepted,
+           (unsigned)rep.rejected,
+           (unsigned)rep.unknown_keys,
+           (unsigned)rep.malformed);
+    if (rep.first_error[0] != '\0')
+    {
+        printf("[json] first_error: %s\n", rep.first_error);
+    }
+
+    config_print_di(9);
+
+    /* --- json export --- */
+    config_print_stage("stage 6: export current cache as JSON");
+
+    static char   export_buf[8192];
+    size_t        written = 0;
+    st = config_export_json(export_buf, sizeof(export_buf), &written);
+    printf("[json] config_export_json -> %s (%zu bytes)\n",
+           config_print_status(st),
+           written);
+    if (st == CONFIG_OK)
+    {
+        fputs(export_buf, stdout);
+        fputc('\n', stdout);
+    }
 
     /* --- idle loop --- */
     config_print_stage("idle: demo complete, task tick once a second");

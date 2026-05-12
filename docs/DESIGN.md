@@ -7,100 +7,138 @@ each layer goes in.
 
 ## Diagrams
 
-High-level views of the configuration manager. Detail lives in the
-per-layer sections below.
+High-level views aimed at readers familiar with embedded systems but
+new to this codebase. Detail lives in the per-layer sections below.
 
-### Architecture — layer stack
+### Architecture — layered view
+
+A typical layered embedded stack: each layer talks only to the one
+directly below it. Higher layers care about *what* to store, lower
+layers about *how* bytes get to the chip.
 
 ```mermaid
 flowchart TD
-    App["Application / IO tasks"]
-    Mgr["config.{h,c}<br/>public API + RAM cache + mutex"]
-    Codec["config_codec.{h,c}<br/>typed records ↔ bytes"]
-    TLV["tlv.{h,c}<br/>generic TLV iterator / writer"]
-    Slot["config_slot.{h,c}<br/>A/B slot protocol + CRC"]
-    CRC["crc32.{h,c}"]
-    Drv["drivers/storage.{h,c}<br/>EEPROM byte I/O"]
-    Lock["config_lock.h<br/>FreeRTOS | pthread impl"]
-    HW[("EEPROM")]
+    App["<b>Application code</b><br/>(IO tasks, CANopen, CLI)<br/><i>reads/writes typed config fields</i>"]
 
-    App -->|get/set/save| Mgr
-    Mgr --> Codec
-    Mgr -.-> Lock
-    Codec --> TLV
-    Mgr --> Slot
-    Slot --> CRC
+    subgraph Manager ["Configuration manager"]
+      direction TB
+      API["<b>Public API</b><br/>get/set/save/reset<br/><i>thread-safe, validates inputs</i>"]
+      Cache["<b>RAM cache</b><br/>live copy of all config<br/><i>protected by a mutex</i>"]
+      API --- Cache
+    end
+
+    Codec["<b>Serialiser</b> (TLV codec)<br/><i>typed struct ⇄ packed bytes</i><br/>fixed wire format, endian-safe"]
+    Slot["<b>Persistence</b> (A/B slot manager)<br/><i>power-loss-safe write protocol</i><br/>CRC + sequence number"]
+    Drv["<b>Storage driver</b><br/><i>raw EEPROM read/write</i>"]
+    HW[("EEPROM<br/>(non-volatile)")]
+
+    App -->|"function calls"| API
+    Manager -->|"encode / decode"| Codec
+    Manager -->|"load on boot<br/>save on commit"| Slot
+    Codec -.->|"produces<br/>byte blob"| Slot
     Slot --> Drv
     Drv --> HW
+
+    classDef ext fill:#eef,stroke:#557
+    class App,HW ext
 ```
 
-### Data flow — boot (`config_init`)
+### Boot flow — loading config from EEPROM
+
+What happens on power-up. The goal: end up with a valid RAM cache no
+matter what state the EEPROM is in (blank, corrupted, or holding good
+data from a previous run).
 
 ```mermaid
 flowchart TD
-    Start(["config_init()"]) --> CrcInit["crc32_init<br/>config_lock_create"]
-    CrcInit --> LoadDef["copy factory defaults<br/>into s_cache"]
-    LoadDef --> Pick["slot_pick_active()"]
-    Pick -->|"SLOT_OK"| Decode["TLV decode payload"]
-    Pick -->|"NO_VALID"| OkDef(["return OK<br/>(defaults stand)"])
-    Pick -->|"STORAGE"| ErrSt(["return ERR_STORAGE<br/>(defaults stand)"])
-    Decode --> Classify{"record tag<br/>known?"}
-    Classify -->|"yes + in range"| Cache["write into s_cache"]
-    Classify -->|"unknown / OOR"| Unk["append raw bytes<br/>to s_unknown[]"]
-    Cache --> Next{"more records?"}
-    Unk --> Next
-    Next -->|"yes"| Classify
-    Next -->|"no"| OkLoaded(["return OK"])
+    Start(["Power on"]) --> Init["Initialise:<br/>CRC table, mutex"]
+    Init --> Defaults["Seed RAM cache with<br/><b>factory defaults</b>"]
+    Defaults --> Pick{"Read both EEPROM slots<br/>any valid?"}
+
+    Pick -->|"no valid slot<br/>(blank or corrupt)"| Done1(["Done — run on defaults<br/>(first boot path)"])
+    Pick -->|"EEPROM read error"| Done2(["Done — run on defaults<br/>report storage error"])
+    Pick -->|"pick newest valid slot"| Parse["Walk records in the blob"]
+
+    Parse --> Rec{"Next record"}
+    Rec -->|"recognised field"| Apply["Overwrite that field<br/>in the RAM cache"]
+    Rec -->|"unknown / out of range<br/>(e.g. written by newer firmware)"| Keep["Stash raw bytes<br/>so we re-emit them on save<br/>(forward compatibility)"]
+    Apply --> More{"more records?"}
+    Keep --> More
+    More -->|"yes"| Rec
+    More -->|"no"| Done3(["Done — cache reflects EEPROM,<br/>missing fields keep their defaults"])
 ```
 
-### Data flow — `config_save`
+### Save flow — committing config to EEPROM
+
+A save must be atomic from the device's point of view: a power cut
+mid-write must never leave the device unable to boot. Achieved by
+writing to the *other* slot and committing with a header-last write.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant C as Caller
-    participant M as config manager
-    participant L as mutex
-    participant K as codec / TLV
-    participant S as slot layer
-    participant E as EEPROM
+    participant App as Caller (e.g. CLI)
+    participant Mgr as Config manager
+    participant Mux as Mutex
+    participant Buf as Scratch buffer
+    participant Slot as Slot manager
+    participant EE as EEPROM
 
-    C->>M: config_save()
-    M->>L: take
-    M->>K: encode s_cache into s_blob_buf
-    M->>K: append s_unknown[] verbatim
-    M->>L: give
-    Note over M,L: mutex NEVER held across slot_write
-    M->>S: slot_write(blob, len)
-    S->>S: pick inactive slot<br/>seq = max(sane)+1
-    S->>E: write payload
-    S->>E: write header (commit)
-    S-->>M: SLOT_OK / ERR
-    M-->>C: CONFIG_OK / ERR
+    App->>Mgr: config_save()
+
+    rect rgba(200,220,255,0.4)
+    Note over Mgr,Buf: Phase 1 — serialise (fast, under lock)
+    Mgr->>Mux: take
+    Mgr->>Buf: encode RAM cache → bytes
+    Mgr->>Buf: append preserved unknown records
+    Mgr->>Mux: give
+    end
+
+    rect rgba(220,240,200,0.4)
+    Note over Mgr,EE: Phase 2 — persist (slow, lock released)
+    Mgr->>Slot: write(blob)
+    Slot->>Slot: choose inactive slot<br/>assign seq = newer than active
+    Slot->>EE: write payload
+    Slot->>EE: write header (commit point)
+    Note right of EE: power-cut before header<br/>→ slot rejected on next boot,<br/>other slot still valid
+    Slot-->>Mgr: ok / error
+    end
+
+    Mgr-->>App: ok / error
 ```
 
-### State flow — A/B slot lifecycle
+### Slot lifecycle — how A/B persistence stays safe
+
+Two identical slots in EEPROM (A and B). At any time at most one is
+being written; the other is the safety net. The diagram tracks **one**
+slot's perspective. A "newer" slot has a higher monotonic sequence
+number than its peer.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Blank: fresh device
-    Blank --> Writing: slot_write targets this slot
-    Valid --> Writing: next save targets inactive slot
-    Writing --> PayloadTorn: power loss mid-payload
-    Writing --> HeaderTorn: power loss mid-header
-    Writing --> Valid: header committed
-    PayloadTorn --> Rejected: CRC mismatch on boot
-    HeaderTorn --> Rejected: header sanity / CRC fail
-    Rejected --> Writing: reused as inactive target
-    Valid --> Active: higher seq than peer
-    Valid --> Standby: lower seq than peer
-    Active --> Standby: peer overtakes on next save
-    Standby --> Active: this slot overtakes on next save
-```
+    direction LR
+    [*] --> Blank: factory state
 
-Boot picks `Active` if present; otherwise loads defaults. The other
-slot is always either `Standby`, `Rejected`, or `Blank` — at least one
-good slot survives any single power-loss event.
+    Blank --> Writing: chosen as<br/>write target
+    Standby --> Writing: chosen as<br/>write target<br/>(this slot is older)
+    Rejected --> Writing: overwritten<br/>(reused safely)
+
+    Writing --> Active: payload + header<br/>fully written<br/>(now the newest valid slot)
+    Writing --> Rejected: power loss<br/>before header<br/>committed
+
+    Active --> Standby: peer slot just<br/>got a newer save
+
+    note right of Active
+        Boot reads this one.
+        Other slot is Standby/Rejected/Blank —
+        at least one valid slot always survives.
+    end note
+
+    note right of Rejected
+        Header missing or CRC mismatch.
+        Ignored on boot, reused on next save.
+    end note
+```
 
 ---
 
@@ -599,6 +637,210 @@ forward-compatible *persistence* (round-trip). On `s_unknown` overflow
 new records are silently dropped — `s_unknown` is 1 KB, well over the
 expected one-or-two future record types.
 
+### Concurrency hardening
+
+The concurrency contract isn't enforced — it's *evidenced*. Two
+mechanisms:
+
+1. **`config_lock_is_held_by_current_thread()` + priority-inversion
+   assert.** A new helper in `config_lock.h` lets defensive code ask
+   "do I hold this lock?". `config_save` calls it right before
+   `slot_write`:
+   ```c
+   config_lock_give();
+   assert(!config_lock_is_held_by_current_thread()
+          && "config_lock must be released before storage I/O");
+   slot_write(s_blob_buf, blob_len);
+   ```
+   A refactor that left the lock held across the SPI transaction trips
+   the assert. The pthread backend uses C11 `_Thread_local` so the
+   helper is race-free even under heavy contention; the FreeRTOS
+   backend uses a static `TaskHandle_t` (narrow TOCTOU window,
+   diagnostic-only, documented in the header).
+
+2. **`tests/test_config_concurrency.cpp` (5 tests).** Two test
+   classes:
+
+   | suite | what it pins |
+   | --- | --- |
+   | `LockStateTest.NotHeldByDefault` | helper returns false on a freshly-created lock |
+   | `LockStateTest.HeldOnlyInsideLockedRegion` | true between take/give, false outside |
+   | `LockStateTest.NotHeldByOtherThread` | a child thread sees its own state, never the parent's |
+   | `ConcurrencyTest.ReadersAndWriterNoTorn` | 4 readers × 1 writer × 2 s; writer stamps the same counter into `id` and `debounce_ms`; readers verify `id == debounce_ms` on every read. Any torn read fails. |
+   | `ConcurrencyTest.SaveDoesNotBlockReadersForever` | 4 readers × 1 saver × 2 s; readers must make forward progress while `config_save` is in flight, proving the encode/release/write-outside-lock pattern works. |
+
+   Typical run: ~10⁶ reads, ~10⁵ writes, ~10² saves in 2 seconds.
+   Zero torn reads, zero deadlocks, zero priority-inversion asserts.
+
+   CI invocation suggestion: `--gtest_repeat=until-fail:50` on the
+   concurrency suites to maximise the chance of catching rare ordering
+   hazards. Local validation: 20 consecutive repeats clean.
+
+### Out-of-scope for this layer
+
+The proven property is *no torn reads / no observable lock starvation*.
+What we don't claim:
+
+- **No livelock** — a pathological reader storm could in theory delay
+  writers indefinitely under priority-inheritance disabled. Not
+  observed in tests; not proven.
+- **Bounded latency** under priority-inversion. The assert proves the
+  *structural* property (lock not held across I/O); the test proves the
+  *observable* property (readers make progress). Neither bounds the
+  worst-case stall.
+- **Correctness under preemption inside `pthread_mutex_lock`** — the
+  pthread runtime handles this; we trust it.
+
 ## Human-readable layer
 
-_(to follow as the JSON import/export layer goes in.)_
+```
+src/application/
+  config_json.{h,c}   JSON wrapper over the manager
+examples/
+  config.json         hand-written illustrative example
+```
+
+External dep: cJSON v1.7.18 via `FetchContent` (root `CMakeLists.txt`).
+Built static, linked into `application`. Heap-using parser — intended
+for the External Comms / CLI thread, **not** the IO hot path.
+
+### Wire shape
+
+```
+{
+  "format": 2,
+  "system": { canopen_node_id, can_bitrate, heartbeat_ms,
+              sync_window_us, nmt_startup, producer_emcy_cob_id },
+  "di":   [ { "channel": 0, ... }, { "channel": 5, ... } ],
+  "do":   [ ... ],
+  "tc":   [ ... ],
+  "ai":   [ ... ],
+  "ao":   [ ... ],
+  "pcnt": [ ... ],
+  "pwm":  [ ... ]
+}
+```
+
+Each record carries an explicit `"channel"` field naming the cache
+index it targets. Array order is purely presentational — an operator
+patching channel 9 ships a one-element array, not a leading-null
+prefix. Export emits a dense, ordered array (channels 0..N-1) for
+readability. Enums encoded as strings (`"ACTIVE_HIGH"`, `"500K"`);
+integer codes also accepted on import for tool friendliness.
+
+### API surface
+
+| symbol | direction | notes |
+| --- | --- | --- |
+| `config_export_json(buf, cap, *written)` | cache → JSON | dense arrays, always NUL-terminated, `CONFIG_ERR_TOO_LARGE` if `cap` too small |
+| `config_import_json(json, len, *report)` | JSON → cache | parses then dispatches each record through the Phase 4 setters; `report` optional |
+| `config_import_report_t` | — | `accepted / rejected / unknown_keys / malformed` counters + `first_error[96]` string |
+
+### Import pipeline
+
+```
+parse → for each known array:
+  seen_mask = 0
+  for each entry:
+    null              → silent no-op
+    not an object     → report->malformed++
+    no "channel" int  → report->rejected++ (missing/non-integer channel)
+    channel out of    → report->rejected++ (out of range)
+      [0, COUNT)
+    channel in        → report->rejected++ (duplicate, first wins)
+      seen_mask
+    else              → mark seen → get cache[ch] → patch → set cache[ch]
+```
+
+Set goes through the same validator the C API uses — there is no
+second validation path. A bad enum, out-of-range field, or sentinel
+violation is rejected by the setter and increments `report->rejected`.
+
+### Sparse / partial semantics
+
+| construct | meaning |
+| --- | --- |
+| missing top-level key (`"do"` absent) | leave that entire array unchanged |
+| empty array (`"di": []`) | no records touched in that array |
+| `null` array entry | accepted as a silent no-op (carries no addressing info) |
+| missing field inside a record (other than `"channel"`) | keep current cached value for that field |
+| unknown top-level key | tolerated, `report->unknown_keys++` |
+| unknown field inside a record | silently ignored (patcher only reads keys it knows) |
+
+Lets an operator ship a one-field-of-one-record edit as a single
+two-line object — no leading-null padding, no positional gotchas.
+
+### Report struct semantics
+
+- Counters are monotonic across the whole import; the call is **not**
+  transactional — accepted records stay applied even if later records
+  fail. `config_save` is the commit boundary, separate from import.
+- `first_error` captures only the **first** failure (which array,
+  which index, which field, what went wrong). Subsequent failures are
+  counted but not described — keeps the buffer bounded for the FW
+  build.
+- Return value: `CONFIG_OK` if JSON parsed (regardless of per-record
+  results — check `report->rejected`); `CONFIG_ERR_CODEC` only on
+  malformed top-level JSON; `CONFIG_ERR_INVALID` on null input or
+  non-object root.
+
+### Addressing contract
+
+Channel is the single source of identity for a record. Four ways a
+record can fail to address a cache slot, all rejected with a
+descriptive `first_error`:
+
+| failure | example | `first_error` substring |
+| --- | --- | --- |
+| missing `channel` | `{"debounce_ms": 30}` | `"missing or non-integer 'channel'"` |
+| non-integer `channel` | `{"channel": "front_door", ...}` | `"missing or non-integer 'channel'"` |
+| out-of-range `channel` | `{"channel": 99, ...}` (only 16 DIs) | `"channel 99 out of range"` |
+| duplicate `channel` | two records both `"channel": 3` | `"duplicate channel 3"` |
+
+Duplicate policy is **first wins** — the first record at a given
+channel is applied; subsequent duplicates are rejected. This surfaces
+operator typos through the report rather than silently last-writes-wins.
+
+### Forward compatibility
+
+Unknown top-level keys (e.g. `"//comment"`, future `"rtd"` array) are
+tolerated and counted in `unknown_keys`. Unknown fields inside a
+record are silently ignored — the patcher only reads keys it knows
+about, so adding a future field name in a JSON file won't break older
+firmware. Operators can stash change-log notes via `//*` keys without
+affecting import.
+
+### Threading and allocation
+
+cJSON allocates from the C heap via `malloc`/`free`. The IO hot path
+must never call import/export — wire this layer into a CLI or
+External Comms task with its own heap budget. The underlying
+`config_get_*` / `config_set_*` calls are mutex-protected, so import
+running concurrently with IO readers is safe; the lock-hold time stays
+in microseconds because each setter copies a single record under the
+lock and releases.
+
+### Test coverage (`tests/test_config_json.cpp`, 22 tests)
+
+| group | what it pins |
+| --- | --- |
+| **Export shape** (3) | round-trip-safe JSON; per-record `"channel"` emitted; oversize/null buffers rejected without crash |
+| **Round-trip** (1) | `set → export → reset → import → get` reproduces every field across all 7 IO arrays |
+| **Single-source validation** (3) | bad enum strings, PWM `duty_permille > 1000`, and `producer_emcy_cob_id == 0x80` are all rejected by the *setter*, not by JSON-specific code |
+| **Malformed input** (3) | broken JSON → `CONFIG_ERR_CODEC`; non-object root or `NULL` → `CONFIG_ERR_INVALID` |
+| **Addressing contract** (5) | missing channel, non-integer channel, out-of-range channel, duplicate channel (first wins), `null` array entry as silent no-op |
+| **Partial update** (3) | one-element JSON patches one channel, leaving other channels untouched; missing fields preserved from cache; out-of-order records still land at the right cache slot |
+| **Forward compat / aliases** (3) | unknown top-level key counted, unknown field inside a record silently ignored, integer enum alternative accepted |
+| **Report semantics** (1) | first failure is the one captured in `first_error`; later failures only bump the counter |
+
+### Out-of-scope for this layer
+
+- **Schema migration on `format` change** — `format: 2` is the current
+  wire version; the import code accepts any number as a no-op for now.
+  A future bump will need an explicit migration step before dispatch.
+- **Atomic import** — see report-struct semantics above. If atomicity
+  is wanted, callers can snapshot via export, attempt import, and
+  re-import the snapshot on failure.
+- **Streaming / chunked parse** — full document is loaded into cJSON's
+  in-memory tree. Sufficient for ≤32 KB blobs; not for arbitrarily
+  large inputs.

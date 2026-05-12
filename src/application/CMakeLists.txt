@@ -2,6 +2,7 @@ add_library(application STATIC
     config.c
     config_codec.c
     config_defaults.c
+    config_json.c
     config_slot.c
     crc32.c
     tlv.c
@@ -9,9 +10,10 @@ add_library(application STATIC
 
 target_include_directories(application PUBLIC
     ${CMAKE_SOURCE_DIR}/src
+    ${cjson_SOURCE_DIR}
 )
 
-target_link_libraries(application PUBLIC drivers)
+target_link_libraries(application PUBLIC drivers cjson)
 target_link_libraries(application PRIVATE project_warnings)
 
 # Select the right config_lock backing based on whether we're building
