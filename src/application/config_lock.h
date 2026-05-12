@@ -45,6 +45,21 @@ void config_lock_give (void);
  * between cases. Safe to call when no lock exists. */
 void config_lock_destroy (void);
 
+/* Returns true iff this thread currently holds the lock. Intended for
+ * defensive assertions (e.g. "no SPI I/O while the cache mutex is
+ * held").
+ *
+ * The pthread backend uses a C11 _Thread_local flag — each thread
+ * reads and writes only its own state, so the return value is accurate
+ * even under heavy contention.
+ *
+ * The FreeRTOS backend tracks the holder via a single static
+ * TaskHandle_t; that has a narrow TOCTOU window during concurrent
+ * take/give from another task. The result is "almost always right" and
+ * fine as a defensive assert in single-writer paths (config_save is
+ * one), but should not be used as a synchronisation primitive. */
+bool config_lock_is_held_by_current_thread (void);
+
 #ifdef __cplusplus
 }
 #endif
