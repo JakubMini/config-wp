@@ -1,0 +1,7 @@
+problems to solve:
+
+a - general layout of various I/O pins, their functions, class/struct to hold those (data model)
+b - human readable config file format - get it in, parse it
+c - safe storage, conflict free
+d - architercture - non-blocking, threadsafe
+e - CiA 401 stuff
