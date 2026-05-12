@@ -36,6 +36,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #define SLOT_MAGIC ((uint32_t)0xC0FC0FCAu)
@@ -315,6 +316,12 @@ slot_write (const void * payload, size_t len)
     {
         return SLOT_ERR_STORAGE;
     }
+
+    printf("[slot] wrote slot %c seq=%u len=%zu (offset=0x%08x)\n",
+           target == SLOT_A ? 'A' : 'B',
+           (unsigned)new_seq,
+           len,
+           (unsigned)SLOT_OFFSET[target]);
 
     return SLOT_OK;
 }

@@ -1,0 +1,108 @@
+{
+  "//": "Example partial-update config. Apply via config_import_json().",
+  "//1": "Each record carries an explicit 'channel' field naming the cache",
+  "//2": "index it targets. Records that don't appear leave their channel",
+  "//3": "unchanged; fields missing from a record keep their cached value.",
+  "//4": "Enum fields accept the symbolic string (preferred) OR the integer code.",
+  "//5": "Top-level `//*` keys are unknown to the manager and tolerated as",
+  "//6": "forward-compat noise — they bump unknown_keys in the import report.",
+
+  "format": 2,
+
+  "system": {
+    "canopen_node_id": 42,
+    "can_bitrate": "500K",
+    "heartbeat_ms": 1000,
+    "sync_window_us": 1000,
+    "nmt_startup": "WAIT",
+    "//emcy_note": "0 = derive 0x80+node_id at NMT-Op. Override values must be >= 0x81.",
+    "producer_emcy_cob_id": 0
+  },
+
+  "di": [
+    {
+      "channel": 0,
+      "name": "front_door",
+      "id": 4660,
+      "debounce_ms": 50,
+      "polarity": "ACTIVE_LOW",
+      "fault_state": "HIGH",
+      "interrupt_enabled": true
+    },
+    {
+      "channel": 1,
+      "name": "estop",
+      "id": 4661,
+      "debounce_ms": 5,
+      "polarity": "ACTIVE_LOW",
+      "fault_state": "HIGH",
+      "interrupt_enabled": true
+    }
+  ],
+
+  "do": [
+    {
+      "channel": 0,
+      "name": "valve_1",
+      "id": 8192,
+      "polarity": "ACTIVE_HIGH",
+      "fault_state": "LOW"
+    }
+  ],
+
+  "tc": [
+    {
+      "channel": 0,
+      "name": "exhaust_temp",
+      "id": 24576,
+      "tc_type": "K",
+      "unit": "CELSIUS",
+      "cjc_enabled": true,
+      "filter_ms": 250,
+      "fault_state": "HOLD",
+      "fault_value_c10": 0
+    }
+  ],
+
+  "ai": [
+    {
+      "//": "4-20 mA pressure sensor mapped to 0..1000 kPa via integer scaling: value = (raw * 1000) / 4096 + 0",
+      "channel": 0,
+      "name": "pressure_in",
+      "id": 16384,
+      "input_mode": "CURRENT_4_20MA_3W",
+      "filter_ms": 100,
+      "scale_num": 1000,
+      "scale_den": 4096,
+      "offset": 0,
+      "fault_state": "HOLD",
+      "fault_value": 0
+    }
+  ],
+
+  "ao": [],
+
+  "pcnt": [
+    {
+      "channel": 0,
+      "name": "wheel_tick",
+      "id": 20480,
+      "mode": "FREQUENCY",
+      "edge": "BOTH",
+      "limit": 100000,
+      "reset_on_read": false
+    }
+  ],
+
+  "pwm": [
+    {
+      "channel": 0,
+      "name": "fan_pwm",
+      "id": 22528,
+      "period_us": 10000,
+      "duty_permille": 750,
+      "fault_state": "LOW",
+      "fault_duty_permille": 0
+    }
+  ]
+}

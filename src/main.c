@@ -8,8 +8,10 @@
 
 #include "application/config.h"
 #include "drivers/storage.h"
+#include "drivers/uart_sim.h"
 
 #include "config_print.h"
+#include "external_comms.h"
 
 #define APP_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
 #define APP_TASK_STACK    (configMINIMAL_STACK_SIZE * 2)
@@ -91,13 +93,42 @@ prvAppTask (void * pvParameters)
     config_print_di(0);
     config_print_system("after reset");
 
+    /* --- json patch via external comms task --- */
+    config_print_stage("stage 5: submit JSON patch via external comms thread");
+
+    /* Operator-style patch: one record, addressed by channel, carrying
+     * only the field that changes. The buffer lives in BSS so it stays
+     * valid past the submit call — the comms task may not pick it up
+     * until we yield. */
+    static const char patch_json[]
+        = "{\n"
+          "  \"//note\": \"demo: bump di[ch=9] debounce only\",\n"
+          "  \"di\": [ { \"channel\": 9, \"debounce_ms\": 100 } ]\n"
+          "}\n";
+
+    config_print_di(9);
+
+    const bool submitted
+        = external_comms_submit(patch_json, sizeof(patch_json) - 1U);
+    printf("[app] external_comms_submit -> %s\n",
+           submitted ? "queued" : "FAIL");
+
+    /* Yield so the comms task can drain. Both tasks run at IDLE+1, so
+     * a short delay is enough; in a real device the comms task would
+     * sit at a low priority and naturally pre-empt nothing. */
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    config_print_di(9);
+
+    /* The comms task auto-saves on successful import, so no explicit
+     * config_save() is needed here — stage 3's reload demo already
+     * proved the storage round-trip works. */
+
     /* --- idle loop --- */
     config_print_stage("idle: demo complete, task tick once a second");
 
-    unsigned tick = 0;
     for (;;)
     {
-        printf("[app] idle tick %u\n", tick++);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -117,6 +148,13 @@ main (void)
      * tear the process down cleanly. */
     signal(SIGINT, prvShutdownHandler);
     signal(SIGTERM, prvShutdownHandler);
+
+    /* Spawn the external comms task + queue ahead of the scheduler so
+     * the consumer is ready before any producer submits. */
+    external_comms_init();
+
+    /* Spawn the simulated-UART listener (TCP :5555). */
+    uart_sim_init(5555);
 
     BaseType_t rc = xTaskCreate(
         prvAppTask, "app", APP_TASK_STACK, NULL, APP_TASK_PRIORITY, NULL);

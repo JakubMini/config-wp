@@ -1,0 +1,11 @@
+{
+    "//": "MALFORMED-JSON demo. The trailing comma below makes this document",
+    "//": "syntactically invalid. cJSON refuses to parse it; the import returns",
+    "//": "CONFIG_ERR_INVALID before touching the cache and the AT driver replies",
+    "//": "with `ERROR: import failed (...)`. Nothing is persisted to EEPROM.",
+    "format": 2,
+    "system": {
+        "canopen_node_id": 42,
+        "heartbeat_ms": 1000,
+    }
+}

@@ -123,6 +123,19 @@ TEST_F(ConcurrencyTest, ReadersAndWriterNoTorn)
      * atomically under the manager's mutex. A reader that sees those
      * two fields disagree is observing a torn read — proof the mutex
      * isn't actually serialising. */
+    /* Pre-stamp di[0] so id == debounce_ms BEFORE any reader starts.
+     * The defaults table has id=0 and debounce_ms=10 — different
+     * values. Without this seed, a reader that races ahead of the
+     * writer's first config_set_di would observe the (consistent but
+     * unequal) default state and the test's "id == debounce_ms"
+     * invariant would flag it as a torn read. */
+    {
+        di_config_t seed = g_di_defaults[0];
+        seed.id          = 0;
+        seed.debounce_ms = 0;
+        ASSERT_EQ(config_set_di(0, &seed), CONFIG_OK);
+    }
+
     std::atomic<bool>     stop { false };
     std::atomic<uint64_t> read_count { 0 };
     std::atomic<uint64_t> write_count { 0 };

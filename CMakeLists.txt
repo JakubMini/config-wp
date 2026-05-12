@@ -27,6 +27,27 @@ option(BUILD_APP "Build the FreeRTOS application binary" ON)
 
 include(FetchContent)
 
+# cJSON for the human-readable JSON import/export layer. Single .c + .h,
+# MIT-licensed, ~10 KB ROM on Cortex-M. We disable its tests / examples
+# / install targets and only consume the static library.
+set(ENABLE_CJSON_TEST       OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UTILS      OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_VERSION_SO OFF CACHE BOOL "" FORCE)
+set(ENABLE_PUBLIC_SYMBOLS   ON  CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS_SAVE  ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS       OFF CACHE BOOL "" FORCE)
+# cJSON 1.7.x ships an old cmake_minimum_required; suppress the
+# modern-CMake rejection for the fetched subproject only.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+FetchContent_Declare(
+    cjson
+    GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+    GIT_TAG v1.7.18
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(cjson)
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVE} CACHE BOOL "" FORCE)
+
 if(BUILD_APP)
     set(FREERTOS_PORT GCC_POSIX CACHE STRING "" FORCE)
     set(FREERTOS_HEAP 4 CACHE STRING "" FORCE)
@@ -49,6 +70,8 @@ if(BUILD_APP)
     add_executable(config_wp
         src/main.c
         src/config_print.c
+        src/external_comms.c
+        src/drivers/uart_sim.c
     )
     target_link_libraries(config_wp PRIVATE
         application

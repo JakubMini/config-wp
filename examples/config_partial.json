@@ -1,0 +1,20 @@
+{
+    "//": "PARTIAL-UPDATE demo. Demonstrates two key invariants of the import path:",
+    "//1": "  1. Sparse records — only the channels listed are touched; di[2..15] keep their cache.",
+    "//2": "  2. Sparse fields  — fields not present in a record keep their cached value.",
+    "//3": "Send via:  ( printf 'AT+SET_CONFIG\\n'; cat examples/config_partial.json; sleep 0.3 ) | nc localhost 5555",
+    "format": 2,
+    "di": [
+        {
+            "channel": 0,
+            "debounce_ms": 25
+        },
+        {
+            "channel": 1,
+            "interrupt_enabled": false
+        }
+    ],
+    "system": {
+        "heartbeat_ms": 750
+    }
+}
