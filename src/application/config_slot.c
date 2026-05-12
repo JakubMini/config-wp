@@ -40,8 +40,9 @@
 
 #define SLOT_MAGIC      ((uint32_t)0xC0FC0FCAu)
 #define SLOT_FORMAT_VER ((uint16_t)1u)
-#define SLOT_PAYLOAD_MAX \
-    ((size_t)2028u) /* tuned so 2*(header+payload) == 4096 */
+/* tuned so 2*(header+payload) == 4096; exposed publicly as
+ * SLOT_PAYLOAD_MAX_BYTES via the header. */
+#define SLOT_PAYLOAD_MAX  ((size_t)SLOT_PAYLOAD_MAX_BYTES)
 #define SLOT_HEADER_BYTES ((size_t)20u)
 #define SLOT_TOTAL_BYTES  (SLOT_HEADER_BYTES + SLOT_PAYLOAD_MAX)
 

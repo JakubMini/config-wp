@@ -9,26 +9,87 @@
 #include "application/config.h"
 #include "drivers/storage.h"
 
+#include "config_print.h"
+
 #define APP_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
 #define APP_TASK_STACK    (configMINIMAL_STACK_SIZE * 2)
+
+/* ===================================================================
+ * Demo flow
+ * =================================================================== */
 
 static void
 prvAppTask (void * pvParameters)
 {
     (void)pvParameters;
 
+    config_print_stage("stage 1: storage + config manager init");
     storage_init();
-    if (config_init() != CONFIG_OK)
+    config_status_t st = config_init();
+    printf("[cfg] config_init -> %s\n", config_print_status(st));
+
+    config_print_system("after init");
+    config_print_di(0);
+    config_print_di(1);
+
+    /* --- mutate --- */
+    config_print_stage("stage 2: mutate one DI + system, then save");
+
+    di_config_t di0;
+    if (config_get_di(0, &di0) == CONFIG_OK)
     {
-        printf("config_init failed\n");
+        snprintf(di0.name, sizeof(di0.name), "demo-di");
+        di0.debounce_ms       = 25;
+        di0.polarity          = DI_POLARITY_ACTIVE_LOW;
+        di0.interrupt_enabled = true;
+        st                    = config_set_di(0, &di0);
+        printf("[cfg] config_set_di(0, demo-di) -> %s\n",
+               config_print_status(st));
     }
 
+    system_config_t sys;
+    if (config_get_system(&sys) == CONFIG_OK)
+    {
+        sys.canopen_node_id = 42;
+        sys.heartbeat_ms    = 500;
+        st                  = config_set_system(&sys);
+        printf("[cfg] config_set_system(node=42, hb=500) -> %s\n",
+               config_print_status(st));
+    }
+
+    config_print_di(0);
+    config_print_system("after mutation");
+
+    st = config_save();
+    printf("\n[cfg] config_save -> %s\n", config_print_status(st));
+
+    /* --- reload --- */
+    config_print_stage("stage 3: reload from storage (simulates power cycle)");
+
+    config_deinit();
+    st = config_init();
+    printf("[cfg] config_init -> %s\n", config_print_status(st));
+
+    config_print_di(0);
+    config_print_system("after reload");
+
+    /* --- reset --- */
+    config_print_stage(
+        "stage 4: reset to factory defaults (in-RAM only, not persisted)");
+
+    st = config_reset_defaults();
+    printf("[cfg] config_reset_defaults -> %s\n", config_print_status(st));
+
+    config_print_di(0);
+    config_print_system("after reset");
+
+    /* --- idle loop --- */
+    config_print_stage("idle: demo complete, task tick once a second");
+
+    unsigned tick = 0;
     for (;;)
     {
-        /* Candidates: replace this with whatever the configuration management
-         * system needs to do at runtime (poll for updates, persist changes,
-         * etc.). The task should never return. */
-        printf("app task running\n");
+        printf("[app] idle tick %u\n", tick++);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

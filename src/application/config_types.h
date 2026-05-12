@@ -242,18 +242,37 @@ typedef struct
     uint16_t      fault_duty_permille;
 } pwm_config_t;
 
+/*
+ * Field widths match the CANopen OD object widths so the eventual stack
+ * thread can map cache members directly onto OD entries:
+ *
+ *   canopen_node_id        — node-id (1..127), not an OD object itself
+ *   can_bitrate            — bitrate enum, mapped to LSS sub-objects
+ *   heartbeat_ms           — OD 0x1017 Producer Heartbeat Time (UNSIGNED16)
+ *   sync_window_us         — OD 0x1007 Synchronous Window Length (UNSIGNED32)
+ *   nmt_startup            — manufacturer-specific (0x2xxx)
+ *   producer_emcy_cob_id   — OD 0x1014 EMCY producer COB-ID (UNSIGNED32):
+ *                              bit 31  = 0 valid / 1 disabled
+ *                              bit 30  = 0 11-bit / 1 29-bit frame format
+ *                              bits 28..0 = COB-ID
+ *
+ * PDO communication (0x1400..0x15FF, 0x1800..0x19FF) and PDO mapping
+ * (0x1600..0x17FF, 0x1A00..0x1BFF) are NOT yet represented — see
+ * docs/DESIGN.md for the planned shape.
+ */
 typedef struct
 {
     uint8_t       canopen_node_id; /* 1..127 per CANopen */
     can_bitrate_t can_bitrate;
-    uint16_t      heartbeat_ms;
-    uint16_t      sync_window_us;
+    uint16_t      heartbeat_ms;   /* OD 0x1017 (UNSIGNED16, ms) */
+    uint32_t      sync_window_us; /* OD 0x1007 (UNSIGNED32, µs) */
     nmt_startup_t nmt_startup;
-    /* EMCY producer COB-ID. 0 = use the CANopen predefined-connection-set
-     * value, i.e. 0x80 + canopen_node_id, computed at NMT startup. A
-     * non-zero value is treated as an operator override and used verbatim.
-     * Stored separately from the SYNC COB-ID (always 0x80 by spec). */
-    uint16_t producer_emcy_cob_id;
+    /* OD 0x1014 EMCY producer COB-ID (UNSIGNED32, see header above for
+     * bit layout). 0 = use the CANopen predefined-connection-set value
+     * (0x80 + canopen_node_id), computed at NMT startup. Any non-zero
+     * value is an operator override and used verbatim. Stored separately
+     * from the SYNC COB-ID (always 0x80 by spec). */
+    uint32_t producer_emcy_cob_id;
 } system_config_t;
 
 /* ------------------------------------------------------------------------- */

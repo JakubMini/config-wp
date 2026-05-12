@@ -50,7 +50,11 @@ typedef enum
 } slot_id_t;
 
 /* Maximum payload bytes the slot layer accepts per write / returns per
- * read. Compile-time constant so callers can statically size buffers. */
+ * read. Compile-time constant so callers can statically size buffers.
+ * The function form is kept for callers that prefer a runtime value;
+ * both produce the same number. */
+#define SLOT_PAYLOAD_MAX_BYTES 2028u
+
 size_t slot_max_payload (void);
 
 /* Locate the valid slot with the highest sequence number, copy its
