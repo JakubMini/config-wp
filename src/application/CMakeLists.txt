@@ -1,6 +1,8 @@
 add_library(application STATIC
     config.c
     config_defaults.c
+    config_slot.c
+    crc32.c
 )
 
 target_include_directories(application PUBLIC
