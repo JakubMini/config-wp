@@ -17,12 +17,21 @@ extern "C"
 #include "application/crc32.h"
 }
 
-TEST(Crc32, EmptyInputIsZero)
+class Crc32Test : public ::testing::Test
+{
+protected:
+    void SetUp () override
+    {
+        crc32_init();
+    }
+};
+
+TEST_F(Crc32Test, EmptyInputIsZero)
 {
     EXPECT_EQ(crc32_compute(nullptr, 0), 0x00000000u);
 }
 
-TEST(Crc32, StandardVector_123456789)
+TEST_F(Crc32Test, StandardVector_123456789)
 {
     /* Canonical CRC-32/ISO-HDLC test vector. Verified independently with
      *   python -c "import binascii;print(hex(binascii.crc32(b'123456789')))"
@@ -32,7 +41,7 @@ TEST(Crc32, StandardVector_123456789)
     EXPECT_EQ(crc32_compute(msg, std::strlen(msg)), 0xCBF43926u);
 }
 
-TEST(Crc32, SingleZeroByte)
+TEST_F(Crc32Test, SingleZeroByte)
 {
     const uint8_t zero = 0u;
     /* python -c "import binascii;print(hex(binascii.crc32(b'\\x00')))"
@@ -40,7 +49,7 @@ TEST(Crc32, SingleZeroByte)
     EXPECT_EQ(crc32_compute(&zero, 1), 0xD202EF8Du);
 }
 
-TEST(Crc32, StreamingMatchesOneShot)
+TEST_F(Crc32Test, StreamingMatchesOneShot)
 {
     const char * a = "12345";
     const char * b = "6789";
@@ -56,7 +65,7 @@ TEST(Crc32, StreamingMatchesOneShot)
     EXPECT_EQ(streamed, 0xCBF43926u);
 }
 
-TEST(Crc32, InitIsIdempotent)
+TEST_F(Crc32Test, InitIsIdempotent)
 {
     /* crc32_init builds the lookup table; calling it twice must produce
      * the same answers afterwards. */

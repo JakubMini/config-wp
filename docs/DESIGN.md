@@ -282,6 +282,24 @@ Header (`slot_header_t`, packed to 20 bytes — `static_assert`'d):
 A single CRC covers the header prefix and the payload. The CRC field is
 placed last so it can be computed in one streaming pass.
 
+### Header sanity rules (before CRC)
+
+`slot_header_looks_sane` rejects a header without touching the payload
+when any of the following is true:
+
+- `magic` is not `SLOT_MAGIC` (cheap blank-EEPROM / wrong-blob check)
+- `format_ver` is not `SLOT_FORMAT_VER` (forces a clean break when the
+  layout changes; older firmware refuses to interpret newer slots and
+  vice versa rather than silently misreading them)
+- `flags` is non-zero (reserved today; a non-zero value signals a
+  future firmware that uses the bit, e.g. "signed slot", and old code
+  must refuse to apply naive logic to it)
+- `length` exceeds `SLOT_PAYLOAD_MAX`
+
+These checks run before the payload is read, so they short-circuit
+cheaply on blank or unfamiliar slots. The CRC check is the final gate
+and covers the same bytes plus the payload — duplicate but defensive.
+
 ### Protocol
 
 **Boot path — `slot_pick_active(out_id, buf, cap, out_len)`**
@@ -322,7 +340,24 @@ placed last so it can be computed in one streaming pass.
   for any opaque byte payload, not just configuration. It does not pull
   in `config_types.h`.
 - **No dynamic allocation.** All RAM is caller-provided or stack-local.
-  The `crc32` lookup table (1 KB) is built lazily on first use.
+  The `crc32` lookup table (1 KB) is a single module-local array.
+- **Distinguishable storage errors.** If a `storage_read` fails during
+  the boot scan, `slot_pick_active` returns `SLOT_ERR_STORAGE` rather
+  than `SLOT_ERR_NO_VALID` — the caller knows the difference between
+  "blank EEPROM, load defaults" and "hardware is broken, raise an alarm".
+
+### CRC initialisation contract
+
+`crc32_init()` MUST be called once at single-threaded startup before any
+`crc32_compute` or `crc32_step` call. The implementation does not
+self-initialise: a lazy build of the 1 KB lookup table would race with
+readers in a multi-task system, even though the final table values are
+deterministic. After init the table is read-only and safe for
+concurrent access. Debug builds catch missed init via an assertion.
+
+In the test suite both `Crc32Test` and `SlotTest` fixtures call
+`crc32_init()` in their `SetUp`. The eventual `config_init()` will call
+it once before any task spawns.
 
 ### What it does not give us
 

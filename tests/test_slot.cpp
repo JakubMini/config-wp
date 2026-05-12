@@ -21,6 +21,7 @@
 extern "C"
 {
 #include "application/config_slot.h"
+#include "application/crc32.h"
 #include "drivers/storage.h"
 }
 
@@ -29,6 +30,7 @@ class SlotTest : public ::testing::Test
 protected:
     void SetUp () override
     {
+        crc32_init();
         ASSERT_EQ(storage_init(), STORAGE_OK);
     }
 };
@@ -143,4 +145,56 @@ TEST_F(SlotTest, BufferTooSmallRejected)
     slot_id_t id       = SLOT_NONE;
     size_t    len      = 0;
     EXPECT_EQ(slot_pick_active(&id, small, sizeof(small), &len), SLOT_ERR_BUF);
+}
+
+TEST_F(SlotTest, NullPayloadWriteRejected)
+{
+    EXPECT_EQ(slot_write(nullptr, 0), SLOT_ERR_BUF);
+}
+
+TEST_F(SlotTest, ZeroLengthWriteRejected)
+{
+    /* A non-NULL pointer paired with len==0 is also rejected — every
+     * valid configuration needs at least one record. */
+    const uint8_t v = 0x01;
+    EXPECT_EQ(slot_write(&v, 0), SLOT_ERR_BUF);
+}
+
+TEST_F(SlotTest, RejectsWrongFormatVer)
+{
+    const uint8_t v[] = { 0xAB };
+    ASSERT_EQ(slot_write(v, 1), SLOT_OK);
+
+    /* Slot A's header now lives at offset 0. Field layout:
+     *   u32 magic | u16 format_ver | u16 flags | ...
+     * so format_ver is at offset 4. Bumping it forces a mismatch.
+     * The CRC field still matches the old format_ver, so this also
+     * proves the version check happens *before* the CRC check (cheap
+     * rejection without touching the payload). */
+    const uint16_t bad_ver = 99u;
+    ASSERT_EQ(storage_write(4u, &bad_ver, sizeof(bad_ver)), STORAGE_OK);
+
+    std::vector<uint8_t> buf(slot_max_payload(), 0);
+    slot_id_t            id  = SLOT_NONE;
+    size_t               len = 0;
+    EXPECT_EQ(slot_pick_active(&id, buf.data(), buf.size(), &len),
+              SLOT_ERR_NO_VALID);
+}
+
+TEST_F(SlotTest, RejectsNonZeroFlags)
+{
+    const uint8_t v[] = { 0xCD };
+    ASSERT_EQ(slot_write(v, 1), SLOT_OK);
+
+    /* flags is a u16 at offset 6 (after magic[4] + format_ver[2]). A
+     * non-zero value here signals a future firmware that uses the flag —
+     * we should refuse to apply our old logic to it. */
+    const uint16_t flag_set = 0x0001u;
+    ASSERT_EQ(storage_write(6u, &flag_set, sizeof(flag_set)), STORAGE_OK);
+
+    std::vector<uint8_t> buf(slot_max_payload(), 0);
+    slot_id_t            id  = SLOT_NONE;
+    size_t               len = 0;
+    EXPECT_EQ(slot_pick_active(&id, buf.data(), buf.size(), &len),
+              SLOT_ERR_NO_VALID);
 }

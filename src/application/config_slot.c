@@ -67,26 +67,45 @@ slot_max_payload (void)
 }
 
 /* Read a slot's header. Returns true if storage_read succeeded; the caller
- * is still responsible for validating magic / length / CRC of the header. */
+ * is still responsible for validating magic / length / CRC of the header.
+ * `*out_storage_err` is set to true if and only if storage_read failed —
+ * lets the caller distinguish "hardware is dead" from "blank slot". */
 static bool
-slot_read_header (slot_id_t id, slot_header_t * out)
+slot_read_header (slot_id_t id, slot_header_t * out, bool * out_storage_err)
 {
     assert(out != NULL);
+    assert(out_storage_err != NULL);
     assert(id == SLOT_A || id == SLOT_B);
     if (storage_read(SLOT_OFFSET[id], out, sizeof(*out)) != STORAGE_OK)
     {
+        *out_storage_err = true;
         return false;
     }
     return true;
 }
 
-/* Validate a header's magic and length only (no payload / CRC read).
- * Used by the write path to learn the current seq cheaply. */
+/* Cheap header check: magic, format version, reserved flags, and length.
+ * No payload read, no CRC. Used by the write path to learn the current
+ * seq, and as a pre-flight by full validation.
+ *
+ * Rejecting non-matching format_ver means a future firmware that bumps
+ * the header layout cannot misinterpret an older slot. Rejecting non-zero
+ * flags means an older firmware reading a slot written by future firmware
+ * that uses a flag bit (e.g. "signed slot") refuses to apply old logic
+ * to it — safer than silently ignoring the bit. */
 static bool
 slot_header_looks_sane (const slot_header_t * hdr)
 {
     assert(hdr != NULL);
     if (hdr->magic != SLOT_MAGIC)
+    {
+        return false;
+    }
+    if (hdr->format_ver != SLOT_FORMAT_VER)
+    {
+        return false;
+    }
+    if (hdr->flags != 0u)
     {
         return false;
     }
@@ -98,15 +117,19 @@ slot_header_looks_sane (const slot_header_t * hdr)
 }
 
 /* Full validation including CRC over header-prefix + payload. Reads the
- * payload into `buf` (which must hold at least hdr->length bytes). */
+ * payload into `buf` (which must hold at least hdr->length bytes).
+ * Sets `*out_storage_err = true` on a storage_read failure so the caller
+ * can distinguish I/O fault from "this slot just isn't valid". */
 static bool
 slot_validate_full (slot_id_t             id,
                     const slot_header_t * hdr,
                     void *                buf,
-                    size_t                cap)
+                    size_t                cap,
+                    bool *                out_storage_err)
 {
     assert(hdr != NULL);
     assert(buf != NULL);
+    assert(out_storage_err != NULL);
     if (!slot_header_looks_sane(hdr))
     {
         return false;
@@ -118,6 +141,7 @@ slot_validate_full (slot_id_t             id,
     const uint32_t payload_off = SLOT_OFFSET[id] + (uint32_t)SLOT_HEADER_BYTES;
     if (storage_read(payload_off, buf, hdr->length) != STORAGE_OK)
     {
+        *out_storage_err = true;
         return false;
     }
     uint32_t state = crc32_start();
@@ -140,15 +164,17 @@ slot_pick_active (slot_id_t * out_id, void * buf, size_t cap, size_t * out_len)
     }
 
     slot_header_t hdr[2];
-    bool          valid[2] = { false, false };
+    bool          valid[2]      = { false, false };
+    bool          storage_error = false;
 
     for (int i = 0; i < 2; ++i)
     {
-        if (!slot_read_header((slot_id_t)i, &hdr[i]))
+        if (!slot_read_header((slot_id_t)i, &hdr[i], &storage_error))
         {
             continue;
         }
-        valid[i] = slot_validate_full((slot_id_t)i, &hdr[i], buf, cap);
+        valid[i] = slot_validate_full(
+            (slot_id_t)i, &hdr[i], buf, cap, &storage_error);
     }
 
     int winner = -1;
@@ -166,7 +192,10 @@ slot_pick_active (slot_id_t * out_id, void * buf, size_t cap, size_t * out_len)
     }
     else
     {
-        return SLOT_ERR_NO_VALID;
+        /* If a storage_read failed during the scan, surface that as a
+         * distinct error so the caller doesn't silently apply defaults
+         * when the hardware is in fact broken. */
+        return storage_error ? SLOT_ERR_STORAGE : SLOT_ERR_NO_VALID;
     }
 
     /* Always re-read the winner's payload. During validation buf is used as
@@ -189,7 +218,15 @@ slot_pick_active (slot_id_t * out_id, void * buf, size_t cap, size_t * out_len)
 slot_status_t
 slot_write (const void * payload, size_t len)
 {
-    assert(payload != NULL || len == 0);
+    /* A zero-length write produces a slot that decodes to "no records",
+     * which is never what the manager wants — every valid configuration
+     * carries at least a system-config record. Reject explicitly so the
+     * underlying storage driver (which forbids NULL even with len==0)
+     * doesn't end up generating SLOT_ERR_STORAGE for a caller bug. */
+    if (payload == NULL || len == 0)
+    {
+        return SLOT_ERR_BUF;
+    }
     if (len > SLOT_PAYLOAD_MAX)
     {
         return SLOT_ERR_TOO_LARGE;
@@ -204,7 +241,11 @@ slot_write (const void * payload, size_t len)
     bool          sane[2] = { false, false };
     for (int i = 0; i < 2; ++i)
     {
-        if (slot_read_header((slot_id_t)i, &hdr[i]))
+        /* Write path doesn't fail on a read error here — we'll just treat
+         * the unreadable slot as a candidate target, which is the safe
+         * default (we're about to overwrite it anyway). */
+        bool ignored_storage_err = false;
+        if (slot_read_header((slot_id_t)i, &hdr[i], &ignored_storage_err))
         {
             sane[i] = slot_header_looks_sane(&hdr[i]);
         }

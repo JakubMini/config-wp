@@ -36,10 +36,10 @@ extern "C"
 typedef enum
 {
     SLOT_OK = 0,
-    SLOT_ERR_NO_VALID,  /* neither slot passed magic + CRC verification */
+    SLOT_ERR_NO_VALID,  /* both slots blank / corrupt; storage I/O was OK */
     SLOT_ERR_TOO_LARGE, /* payload exceeds slot_max_payload() */
     SLOT_ERR_STORAGE,   /* underlying storage_read / storage_write failed */
-    SLOT_ERR_BUF,       /* caller's buffer is NULL or smaller than payload */
+    SLOT_ERR_BUF,       /* caller's buffer is NULL, too small, or len == 0 */
 } slot_status_t;
 
 typedef enum

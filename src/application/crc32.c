@@ -2,10 +2,10 @@
  * Module:  crc32
  * Purpose: Implementation of CRC-32/ISO-HDLC. See crc32.h for contract.
  *
- *          The lookup table is built once on first use via a single-byte
- *          flag. No threading concerns for the build step itself — the
- *          worst case is two threads racing to fill the same deterministic
- *          values, which is benign.
+ *          The lookup table is built once by crc32_init(). After init the
+ *          table is read-only and safe for concurrent access. The compute
+ *          / step APIs assert that init has been called — they will not
+ *          self-initialise, because a lazy build would race with readers.
  *****************************************************************************/
 
 #include "application/crc32.h"
@@ -46,11 +46,8 @@ crc32_start (void)
 uint32_t
 crc32_step (uint32_t state, const void * data, size_t len)
 {
+    assert(s_table_ready && "crc32_init() must be called before crc32_step");
     assert(data != NULL || len == 0);
-    if (!s_table_ready)
-    {
-        crc32_init();
-    }
     const uint8_t * p = (const uint8_t *)data;
     for (size_t i = 0; i < len; ++i)
     {
@@ -68,6 +65,7 @@ crc32_end (uint32_t state)
 uint32_t
 crc32_compute (const void * data, size_t len)
 {
+    assert(s_table_ready && "crc32_init() must be called before crc32_compute");
     assert(data != NULL || len == 0);
     return crc32_end(crc32_step(crc32_start(), data, len));
 }

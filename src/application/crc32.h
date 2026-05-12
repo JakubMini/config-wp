@@ -13,9 +13,11 @@
  *          header-prefix and the payload in one pass without concatenating
  *          them in memory.
  *
- *          The 256-entry lookup table is built lazily on first use. Callers
- *          may force the build with crc32_init() at startup if they prefer
- *          deterministic init-time cost.
+ *          THREAD SAFETY: crc32_init() MUST be called once, during
+ *          single-threaded startup, before any call to crc32_compute /
+ *          crc32_step. After init the read-only lookup table is safe to
+ *          access concurrently from any number of tasks. A lazy init
+ *          would race on the table writes; we don't allow that.
  *****************************************************************************/
 
 #ifndef APPLICATION_CRC32_H
@@ -29,8 +31,9 @@ extern "C"
 #include <stddef.h>
 #include <stdint.h>
 
-/* Build the 256-entry lookup table. Safe to call more than once. Optional
- * — the streaming and one-shot APIs build the table lazily if needed. */
+/* Build the 256-entry lookup table. MUST be called once during
+ * single-threaded startup, before any concurrent use of crc32_compute /
+ * crc32_step. Idempotent — calling twice rebuilds the same values. */
 void crc32_init (void);
 
 /* One-shot CRC over `len` bytes at `data`. Returns the finalised CRC. */
