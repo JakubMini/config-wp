@@ -116,10 +116,45 @@ printf 'AT\n' | nc localhost 5555
 [uart-sim] AT+SET_CONFIG payload 2459 bytes — importing...
 [uart-sim] config_import_json -> OK (accepted=8 rejected=0 unknown_keys=7 malformed=0)
 [uart-sim] persisting cache to storage...
+[slot] wrote slot A seq=3 len=842 (offset=0x00000000)
 [uart-sim] config_save -> OK
 ```
 
-## 5. Threading & ownership notes
+## 5. Robustness demos
+
+The `examples/` directory ships four payloads that each exercise a different
+behaviour of the import path. Drive them through `AT+SET_CONFIG` and watch
+the report counters move.
+
+| File | What it shows | Expected report |
+|---|---|---|
+| [examples/config.json](../examples/config.json) | Full happy-path import | `accepted>0 rejected=0 malformed=0` |
+| [examples/config_partial.json](../examples/config_partial.json) | Sparse records / sparse fields — only listed channels and listed fields change; everything else keeps its cached value | `accepted=3 rejected=0` |
+| [examples/config_forward_compat.json](../examples/config_forward_compat.json) | Unknown keys at top level and inside records are tolerated (forward-compat) | `accepted>0 rejected=0 unknown_keys>=4` |
+| [examples/config_bad_values.json](../examples/config_bad_values.json) | Partial-accept: bad enum / out-of-range / out-of-bounds channel are rejected individually; valid records still land | `accepted>=1 rejected>=3` (and `first_error` populated) |
+| [examples/config_malformed.json](../examples/config_malformed.json) | Syntactically invalid JSON — trailing comma. Import aborts before touching the cache; no slot write | `ERROR: import failed (ERR_INVALID)` |
+
+One-liner to walk through them all:
+
+```bash
+for f in examples/config.json examples/config_partial.json \
+         examples/config_forward_compat.json examples/config_bad_values.json \
+         examples/config_malformed.json; do
+    echo "=== $f ==="
+    ( printf 'AT+SET_CONFIG\n'; cat "$f"; sleep 0.3 ) | nc localhost 5555
+done
+```
+
+Two things worth confirming from the container log:
+
+- For `config_bad_values.json` the consumer **still saves** the cache because
+  the manager treats partial-accept as a successful overall import — the
+  rejected records were never applied, so what's in RAM is consistent and
+  worth committing. You'll see a `[slot] wrote ...` line.
+- For `config_malformed.json` you'll see `config_save` skipped (`import not
+  OK`) and no `[slot] wrote ...` line — the EEPROM contents are untouched.
+
+## 6. Threading & ownership notes
 
 - `uart_sim_task` runs at `tskIDLE_PRIORITY + 1`. The POSIX port implements
   blocking `accept`/`recv` by parking the underlying pthread, so other
@@ -134,7 +169,7 @@ printf 'AT\n' | nc localhost 5555
   [src/external_comms.h](../src/external_comms.h). The AT driver does not use
   it because `AT+SET_CONFIG` needs to ack the client after persistence.
 
-## 6. Limitations
+## 7. Limitations
 
 - No framing on a long-lived connection — each AT command is its own
   connection. Add CRLF framing in `uart_sim_task` if you need a persistent

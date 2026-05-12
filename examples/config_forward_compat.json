@@ -1,0 +1,26 @@
+{
+    "//": "FORWARD-COMPATIBILITY demo. The manager tolerates unknown keys both at the",
+    "//1": "top level and inside individual records — they bump `unknown_keys` in the",
+    "//2": "import report but never cause a reject. This lets a newer config file pass",
+    "//3": "through an older firmware build without losing the known fields.",
+    "//4": "Expect: OK accepted=N rejected=0 unknown_keys>=4",
+    "format": 2,
+    "telemetry_endpoint": "https://example.invalid/api",
+    "feature_flags": {
+        "experimental_x": true,
+        "v3_protocol": false
+    },
+    "system": {
+        "canopen_node_id": 17,
+        "heartbeat_ms": 1000,
+        "fancy_new_field_added_in_v3": "ignored-but-not-rejected"
+    },
+    "di": [
+        {
+            "channel": 0,
+            "name": "front_door",
+            "debounce_ms": 50,
+            "future_isr_window_us": 250
+        }
+    ]
+}

@@ -1,0 +1,31 @@
+{
+    "//": "PARTIAL-ACCEPT demo. Records with invalid fields are rejected individually;",
+    "//1": "valid records in the same document still land in the cache. The first error",
+    "//2": "surfaces in the import report's `first_error` so an operator can fix it.",
+    "//3": "Constraints exercised:",
+    "//4": "  - canopen_node_id must be 1..127  (200 is rejected)",
+    "//5": "  - polarity is an enum: ACTIVE_LOW | ACTIVE_HIGH  (NOPE is rejected)",
+    "//6": "  - di channel index must be < CONFIG_NUM_DI (16); channel 99 is rejected",
+    "//7": "  - di[2] is wholly valid and IS applied to the cache",
+    "//8": "Expect: rejected>=3, accepted>=1",
+    "format": 2,
+    "system": {
+        "canopen_node_id": 200,
+        "heartbeat_ms": 1000
+    },
+    "di": [
+        {
+            "channel": 0,
+            "polarity": "NOPE"
+        },
+        {
+            "channel": 99,
+            "debounce_ms": 10
+        },
+        {
+            "channel": 2,
+            "name": "valid_channel",
+            "debounce_ms": 30
+        }
+    ]
+}

@@ -153,8 +153,7 @@ main (void)
      * the consumer is ready before any producer submits. */
     external_comms_init();
 
-    /* Spawn the simulated-UART listener (TCP :5555). Host side:
-     *   nc -q1 localhost 5555 < examples/config.json                  */
+    /* Spawn the simulated-UART listener (TCP :5555). */
     uart_sim_init(5555);
 
     BaseType_t rc = xTaskCreate(
