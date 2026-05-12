@@ -18,6 +18,7 @@
 
 #include "application/config.h"
 #include "application/config_json.h"
+#include "application/eeprom_manager.h"
 
 #include "config_print.h"
 
@@ -80,20 +81,21 @@ ext_task (void * pv)
         config_status_t st = config_import_json(msg.json, msg.len, &rep);
         ext_log_report(st, &rep);
 
-        /* Persist immediately on a successful import so the operator
-         * can see the EEPROM/storage path exercise itself end-to-end.
-         * Partial-accept (some records rejected) still counts as a
-         * successful overall import — the manager already filtered out
-         * the bad records, so what's in RAM is worth committing. */
+        /* Persistence is the EEPROM Manager's job. We just signal that
+         * the cache changed; the consumer task chooses when/how to
+         * commit (debounce, coalesce, gate on power-OK, etc.). Partial
+         * accepts (some records rejected) still count — the manager
+         * already filtered them out, so what's in RAM is consistent
+         * and worth eventually persisting. */
         if (st == CONFIG_OK)
         {
-            printf("[ext] persisting cache to storage...\n");
-            config_status_t sst = config_save();
-            printf("[ext] config_save -> %s\n", config_print_status(sst));
+            const bool queued = QueueConfigCommit();
+            printf("[ext] QueueConfigCommit -> %s\n",
+                   queued ? "queued" : "FAIL");
         }
         else
         {
-            printf("[ext] skipping config_save (import not OK)\n");
+            printf("[ext] skipping commit (import not OK)\n");
         }
     }
 }
