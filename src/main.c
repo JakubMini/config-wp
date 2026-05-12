@@ -11,6 +11,7 @@
 #include "drivers/storage.h"
 
 #include "config_print.h"
+#include "external_comms.h"
 
 #define APP_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
 #define APP_TASK_STACK    (configMINIMAL_STACK_SIZE * 2)
@@ -92,12 +93,14 @@ prvAppTask (void * pvParameters)
     config_print_di(0);
     config_print_system("after reset");
 
-    /* --- json partial-update --- */
-    config_print_stage("stage 5: import a partial JSON patch (bump di[9] debounce)");
+    /* --- json patch via external comms task --- */
+    config_print_stage(
+        "stage 5: submit JSON patch via external comms thread");
 
     /* Operator-style patch: one record, addressed by channel, carrying
-     * only the field that changes. Everything else — other DI channels,
-     * every other IO array, the system block — is left untouched. */
+     * only the field that changes. The buffer lives in BSS so it stays
+     * valid past the submit call — the comms task may not pick it up
+     * until we yield. */
     static const char patch_json[]
         = "{\n"
           "  \"//note\": \"demo: bump di[ch=9] debounce only\",\n"
@@ -106,21 +109,24 @@ prvAppTask (void * pvParameters)
 
     config_print_di(9);
 
-    config_import_report_t rep;
-    st = config_import_json(patch_json, sizeof(patch_json) - 1U, &rep);
-    printf("[json] config_import_json -> %s "
-           "(accepted=%u rejected=%u unknown_keys=%u malformed=%u)\n",
-           config_print_status(st),
-           (unsigned)rep.accepted,
-           (unsigned)rep.rejected,
-           (unsigned)rep.unknown_keys,
-           (unsigned)rep.malformed);
-    if (rep.first_error[0] != '\0')
-    {
-        printf("[json] first_error: %s\n", rep.first_error);
-    }
+    const bool submitted
+        = external_comms_submit(patch_json, sizeof(patch_json) - 1U);
+    printf("[app] external_comms_submit -> %s\n",
+           submitted ? "queued" : "FAIL");
+
+    /* Yield so the comms task can drain. Both tasks run at IDLE+1, so
+     * a short delay is enough; in a real device the comms task would
+     * sit at a low priority and naturally pre-empt nothing. */
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     config_print_di(9);
+
+    /* Persistence is a separate concern from import. The comms task
+     * never auto-saves — we commit explicitly after a batch of patches. */
+    st = config_save();
+    printf("\n[cfg] config_save -> %s "
+           "(committed external patches to flash)\n",
+           config_print_status(st));
 
     /* --- json export --- */
     config_print_stage("stage 6: export current cache as JSON");
@@ -163,6 +169,10 @@ main (void)
      * tear the process down cleanly. */
     signal(SIGINT, prvShutdownHandler);
     signal(SIGTERM, prvShutdownHandler);
+
+    /* Spawn the external comms task + queue ahead of the scheduler so
+     * the consumer is ready before any producer submits. */
+    external_comms_init();
 
     BaseType_t rc = xTaskCreate(
         prvAppTask, "app", APP_TASK_STACK, NULL, APP_TASK_PRIORITY, NULL);

@@ -70,6 +70,7 @@ if(BUILD_APP)
     add_executable(config_wp
         src/main.c
         src/config_print.c
+        src/external_comms.c
     )
     target_link_libraries(config_wp PRIVATE
         application

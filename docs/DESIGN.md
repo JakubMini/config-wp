@@ -844,3 +844,79 @@ lock and releases.
 - **Streaming / chunked parse** — full document is loaded into cJSON's
   in-memory tree. Sufficient for ≤32 KB blobs; not for arbitrarily
   large inputs.
+
+## External Comms layer
+
+```
+src/
+  external_comms.{h,c}   FreeRTOS task that routes JSON patches into
+                         the manager (executable-level, not in the
+                         application library — depends on FreeRTOS).
+```
+
+A dedicated low-priority task drains a queue of JSON patches and calls
+`config_import_json` on each. Producers (CAN ISR / UART RX / CLI / the
+demo) post `{const char *json, size_t len}` records via
+`external_comms_submit`; the task does the heap-using parse work off
+the IO hot path.
+
+### Why a separate task
+
+| concern | why this layer addresses it |
+| --- | --- |
+| **Heap usage off the IO path** | cJSON allocates from `malloc`/`free` per parse. Doing this on the IO task would put a heap dependency on a real-time path. The comms task owns that heap budget locally. |
+| **Long imports don't stall readers** | Importing a full config does N×`config_set_*` calls. Each call briefly takes the lock, but the *sequence* is long. Running on a separate low-priority task means the IO task's readers keep getting served between setter calls. |
+| **Single-writer discipline for `config_save`** | The manager's contract says `config_save` is single-writer. Centralising "import + (later) save" in one task avoids two threads racing to commit. |
+| **Producer/consumer decoupling** | A CAN message stream and a UART CLI can both feed this layer through the same queue without knowing about each other. |
+
+### API surface
+
+| symbol | role |
+| --- | --- |
+| `external_comms_init(void)` | create the queue (depth 4) + spawn the consumer task. Idempotent. NOT thread-safe — call once before `vTaskStartScheduler`. |
+| `external_comms_submit(json, len)` | thread-safe enqueue with a 100 ms back-pressure timeout. Returns `false` if the queue is full or arguments are invalid. |
+
+### Threading & ownership
+
+- **Priority**: `tskIDLE_PRIORITY + 1` (same as the demo app task for
+  visibility; in a real device put the IO task higher so import work
+  pre-empts nothing critical).
+- **Stack**: `configMINIMAL_STACK_SIZE * 4` — cJSON's parse tree is
+  the dominant consumer.
+- **Buffer ownership**: producers must keep the JSON buffer alive
+  until the consumer drains. For static literals (the demo) and
+  RX rings (real devices) this is trivial. For stack/heap producers a
+  done-semaphore handshake can be retrofitted; currently the only
+  user-visible mechanism is the demo's `vTaskDelay` after submit.
+- **No auto-save**: this layer is purely a router. `config_save` is a
+  separate call made by whatever owns the commit decision — e.g. the
+  demo task explicitly calls `config_save` after submitting patches
+  so a stream of small edits doesn't trigger a stream of EEPROM page
+  writes (page erase + program is ~5–10 ms on real hardware).
+
+### Demo flow
+
+```
+prvAppTask           queue            ext_task
+─────────────        ─────            ────────
+config_print_di(9)
+external_comms_submit(patch) ─► {ptr,len} ──► xQueueReceive
+                                              config_import_json(...)
+                                              printf report
+vTaskDelay(100ms) ◄────────────── (consumer drained)
+config_print_di(9)   <— shows the field updated
+config_save()        <— explicit commit; comms task is uninvolved
+```
+
+### Out-of-scope for this layer
+
+- **Back-pressure handshake** — `external_comms_submit` returns
+  `false` on queue-full, but there's no `external_comms_wait_idle`
+  for "all submitted work drained". Easy to add; not needed for the
+  current demo.
+- **Wire transport** — this layer is transport-agnostic; it doesn't
+  know whether the JSON came from CAN, UART, a CLI, or a unit test.
+  Transport adapters (CAN SDO segmented transfer reassembly, UART
+  line parser, etc.) live above this layer and call `submit`.
+- **Persistence policy** — the layer never calls `config_save`.
+  Whoever owns "when do we commit?" calls it explicitly.
