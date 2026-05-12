@@ -369,6 +369,172 @@ it once before any task spawns.
   some old. The CRC catches this — but recovery is "fall back to the
   other slot", not "stitch the partial write together".
 
+## TLV codec
+
+The TLV layer is the adapter between typed configuration structs and the
+opaque byte payload the slot layer shuttles. Two modules:
+
+```
+src/application/
+  tlv.{h,c}            generic Tag-Length-Value iterator + writer
+  config_codec.{h,c}   type-aware encoders/decoders + tag conventions
+```
+
+`tlv.{h,c}` is type-agnostic — it manipulates `(tag, length, value)`
+records without knowing what the values represent. `config_codec.{h,c}`
+sits on top, defining how each IO struct (and the system struct)
+serialises to bytes and which `tag` identifies each record.
+
+### Record format
+
+Each record on the wire is:
+
+```
++-----------+-----------+----------------------+
+|   tag     |  length   | value (length bytes) |
++-----------+-----------+----------------------+
+ 2 bytes      2 bytes       0 .. 65535 bytes
+```
+
+All multi-byte integers are little-endian on the wire. A TLV stream is
+just the concatenation of records, no padding. With u16 length, any
+single record caps at 64 KiB — plenty (the largest config record is
+38 bytes, and the whole config blob is under 2 KB).
+
+### Tag encoding
+
+```
+bits 15..8   domain   the record type
+bits  7..0   index    channel number within the domain
+```
+
+`domain` mirrors `io_domain_t` for the seven IO types (DI=0, DO=1, ...,
+PWM=6) and uses `0xF0` for the singleton system record. Two consequences:
+
+- Adding a new IO type adds one `io_domain_t` entry and one new tag
+  range. Existing tags don't move — older firmware reading the new
+  stream just doesn't recognise the new domain and skips those records
+  cleanly.
+- `domain` and `index` are both `uint8_t`, so the tag space is
+  `256 × 256 = 65536` records before we'd need to rework anything.
+
+### Per-type wire sizes (value bytes only)
+
+| record | wire size |
+| --- | ---: |
+| DI     | 23 |
+| DO     | 20 |
+| TC     | 26 |
+| AI     | 38 |
+| AO     | 38 |
+| PCNT   | 25 |
+| PWM    | 27 |
+| System |  9 |
+
+These are pinned by `tests/test_config_codec.cpp` against the
+`CONFIG_CODEC_*_WIRE_SIZE` constants in the header. Wire size is
+*deliberately decoupled* from `sizeof(struct)`: the encoder writes
+field-by-field with explicit widths, so struct padding and host
+endianness don't leak into the on-flash representation. The byte
+layout is identical whether the firmware was built on macOS clang, ARM
+gcc, or any other toolchain.
+
+### Forward compatibility
+
+Two complementary mechanisms:
+
+1. **Skip unknown records.** A decoder that doesn't recognise a tag
+   uses `length` to advance past the value and continues. Cost is one
+   `length` read plus a `cursor += length`. No interpretation, no
+   crash.
+2. **Preserve unknown records on rewrite.** `tlv_writer_emit_raw` accepts
+   a pre-encoded record (header + value bytes) and appends it verbatim.
+   Higher layers (manager, Phase 4) capture unknown records during
+   decode and re-emit them with `emit_raw` during encode. The unknown
+   record survives the round-trip byte-for-byte — older firmware never
+   silently destroys configuration data it doesn't understand.
+
+The pinned test is `ConfigCodecForwardCompat.UnknownRecordSurvivesRewrite`:
+build a stream with a known DI record, an unknown record (synthetic
+domain `0x77`), and a known system record. Iterate; capture the
+unknown record's raw bytes. Rebuild via known encoders plus
+`emit_raw`. Assert the new stream equals the original byte-for-byte.
+
+### Forward-compat limitation (field-level)
+
+The TLV codec gives **record-level** forward compatibility — old
+firmware reading new *records* (added DI channels, new domains) handles
+them cleanly. It does NOT give **field-level** forward compatibility
+inside a single record: adding a field to `di_config_t` means:
+
+- New firmware reading old records: the value bytes are short; decode
+  returns `TLV_ERR_TRUNCATED`. The manager applies defaults for the
+  whole record.
+- Old firmware reading new records: the value bytes are longer than
+  the decoder expects; trailing bytes are ignored. Old firmware loses
+  those new fields if it then re-saves the config.
+
+Achieving field-level forward compat would require encoding fields
+themselves as TLV-within-record (nested TLV). That's a meaningful
+complexity increase for a property we can defer — record-level
+suffices for adding new IO types, which is the more common evolution
+direction. Documented here so future-us doesn't think we forgot.
+
+### Why TLV, not Protobuf
+
+Protobuf is also a tag-numbered wire format and would give us
+field-level forward compatibility for free. We deliberately chose
+hand-written TLV over Protobuf. Trade-offs:
+
+| concern | TLV (this codebase) | Protobuf |
+| --- | --- | --- |
+| **Code size on target** | ~200 lines of C, no dependency. | nanopb adds ~10–20 KB ROM plus generated code per `.proto`. |
+| **Runtime cost** | One pass per record, single u16 read + memcpy. No varint decoding. | Varint encode/decode on every field; tag/type wire format more general (and so larger) than we need. |
+| **Build complexity** | Just a `.c` and `.h`. Standard CMake. | `protoc` toolchain step, generated files in the build tree, two source-of-truth dance (`.proto` + generated C). |
+| **Field-level forward compat** | Record-level only; field additions need a version bump or run on the "trailing-bytes-ignored" rule. | Full field-level via tagged fields with default semantics. |
+| **CANopen OD alignment** | `(domain, index)` tag maps 1:1 to OD `(index, subindex)`. Zero translation needed when the CANopen thread lands. | Protobuf field numbers are flat; OD mapping would need a side table. |
+| **Audit / certification posture** | Every byte on the wire is hand-traceable to a line in `config_codec.c`. Safety review is straightforward. | Generated code is harder to audit per MISRA-C / Power-of-10; nanopb itself has a small but non-trivial certification footprint. |
+| **Trade-off** | We accept record-level-only forward compat in exchange for a tiny, auditable, dependency-free codec. | Protobuf wins for cross-language interop and field-level compat, neither of which we need on a single STM32 with no other producers/consumers of this format. |
+
+Other formats considered: CBOR (binary JSON-like — too general for a
+fixed schema), MessagePack (same trade-off as CBOR), straight memcpy
+of structs (no forward compat at all), CANopen DCF text (a fine
+external format, but text-on-flash blows our EEPROM budget — handled
+instead by the JSON import/export layer that will live above this one).
+
+The summary: **TLV is the minimum format that satisfies the README's
+forward-compat and piecewise-update requirements**. Protobuf would
+satisfy them too but at 10–100× the code cost. Every richer format on
+the menu solves problems we don't have.
+
+### Test coverage
+
+`tests/test_tlv.cpp` (generic layer, 11 tests):
+- Writer emits well-formed bytes (tag and length both little-endian).
+- Records append sequentially.
+- `TLV_ERR_NO_SPACE` when capacity is exceeded.
+- `TLV_ERR_BUF` for null value with non-zero length.
+- Zero-length records (header only) are legal.
+- Iterator round-trips records emitted by the writer.
+- Iterator rejects truncated headers (`TLV_ERR_TRUNCATED`).
+- Iterator rejects declared lengths that overrun the buffer
+  (`TLV_ERR_OVERRUN`).
+- Empty buffer reports `TLV_END`, not an error.
+- `tlv_writer_emit_raw` round-trips a pre-encoded record byte-for-byte.
+- `tlv_writer_emit_raw` rejects records whose declared length doesn't
+  match the supplied buffer.
+
+`tests/test_config_codec.cpp` (per-type layer, 13 tests):
+- Encoded sizes match `CONFIG_CODEC_*_WIRE_SIZE` constants for every type.
+- Tag construction and parsing round-trip cleanly.
+- Round-trip with non-default values for every IO type and the system
+  config (8 tests).
+- Truncated buffer rejected on decode.
+- Decoded names are always null-terminated, even when the wire bytes
+  weren't.
+- An unknown record survives a decode/re-encode round-trip
+  byte-for-byte alongside known records.
+
 ## API and threading
 
 _(to follow as the manager API goes in.)_

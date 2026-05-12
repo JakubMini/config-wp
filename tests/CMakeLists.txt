@@ -2,9 +2,11 @@ include(GoogleTest)
 
 add_executable(unit_tests
     test_config.cpp
+    test_config_codec.cpp
     test_crc32.cpp
     test_slot.cpp
     test_storage.cpp
+    test_tlv.cpp
     test_types.cpp
 )
 
