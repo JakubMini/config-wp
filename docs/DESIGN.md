@@ -213,22 +213,6 @@ safer side for solid-state and relay outputs), 100 ms TC filter, integer
 scaling = 1/1 + 0 (i.e. raw-to-engineering passthrough), 100 Hz PWM at 0%
 duty, CAN 500 kbit/s, CANopen node 1, NMT wait-for-command on boot.
 
-### Test coverage
-
-`tests/test_types.cpp` covers four categories, 12 tests total:
-
-1. **Sizeof bounds** — `EXPECT_LE` ceiling on each struct, baselined to
-   the current host-side size. Crossing the ceiling fires the test;
-   raising it is a conscious act (bump the number, note the on-flash
-   impact in the commit). Cortex-M numbers will differ in padding.
-2. **Enum range** — every `_COUNT` sentinel must be positive.
-3. **Defaults sanity** — every entry in every defaults table has a
-   null-terminated name, in-range enum values, non-zero `scale_den` for
-   AI/AO, valid duty for PWM, etc.
-4. **Invariant pin tests** — `FAULT_STATE_HOLD == 0` and
-   `IO_DOMAIN_COUNT == 7`. Either failure means somebody touched a
-   foundational assumption and needs to revisit the rest of the codebase.
-
 ### Modularity story (today)
 
 - **More channels of an existing type** — bump the relevant
@@ -259,7 +243,131 @@ duty, CAN 500 kbit/s, CANopen node 1, NMT wait-for-command on boot.
 
 ## Storage layer
 
-_(to follow as the storage / slot layer goes in.)_
+Two modules sit between the configuration manager and the
+`drivers/storage` byte-buffer interface:
+
+```
+src/application/
+  crc32.{h,c}         CRC-32/ISO-HDLC, one-shot + streaming API
+  config_slot.{h,c}   A/B-slot persistence protocol
+```
+
+The slot layer is **type-agnostic**: it shuttles opaque byte payloads and
+does not depend on `config_types.h`. The TLV codec will sit between
+typed configuration and the byte-payload interface that `slot_*` exposes.
+
+### On-flash layout
+
+```
++-------------------+ offset 0
+| Slot A header     | 20 bytes
+| Slot A payload    | up to SLOT_PAYLOAD_MAX bytes (2028 on the stub)
++-------------------+ offset SLOT_TOTAL
+| Slot B header     |
+| Slot B payload    |
++-------------------+ offset 2 * SLOT_TOTAL
+```
+
+Header (`slot_header_t`, packed to 20 bytes — `static_assert`'d):
+
+| field | type | role |
+| --- | --- | --- |
+| `magic`      | u32 | `0xC0FC0FCA` — identifies a slot we wrote |
+| `format_ver` | u16 | currently `1`; bumped only on layout breaks |
+| `flags`      | u16 | reserved; zero today |
+| `seq`        | u32 | monotonic per-write counter |
+| `length`     | u32 | payload byte count |
+| `crc32`      | u32 | CRC over `header[0..crc32) + payload` |
+
+A single CRC covers the header prefix and the payload. The CRC field is
+placed last so it can be computed in one streaming pass.
+
+### Header sanity rules (before CRC)
+
+`slot_header_looks_sane` rejects a header without touching the payload
+when any of the following is true:
+
+- `magic` is not `SLOT_MAGIC` (cheap blank-EEPROM / wrong-blob check)
+- `format_ver` is not `SLOT_FORMAT_VER` (forces a clean break when the
+  layout changes; older firmware refuses to interpret newer slots and
+  vice versa rather than silently misreading them)
+- `flags` is non-zero (reserved today; a non-zero value signals a
+  future firmware that uses the bit, e.g. "signed slot", and old code
+  must refuse to apply naive logic to it)
+- `length` exceeds `SLOT_PAYLOAD_MAX`
+
+These checks run before the payload is read, so they short-circuit
+cheaply on blank or unfamiliar slots. The CRC check is the final gate
+and covers the same bytes plus the payload — duplicate but defensive.
+
+### Protocol
+
+**Boot path — `slot_pick_active(out_id, buf, cap, out_len)`**
+
+1. Read each slot's header.
+2. For each header that passes magic + length sanity, read the payload
+   into `buf` and verify the CRC over header-prefix + payload.
+3. If both slots are valid, pick the one with the higher `seq`. If only
+   one is valid, pick it. If neither, return `SLOT_ERR_NO_VALID` so the
+   caller falls back to factory defaults.
+4. Always re-read the winner's payload at the end — `buf` is used as
+   scratch during validation, so its contents after the loop reflect
+   whichever slot was checked last, not necessarily the winner.
+
+**Write path — `slot_write(payload, len)`**
+
+1. Cheap scan: read both headers, check magic + length (no CRC, no
+   payload read). Pick the inactive slot as the target. Bump `seq` to
+   `max(sane_seqs) + 1`, starting at `1` if no slot is sane.
+2. Build the new header in RAM, then compute its CRC over header
+   prefix + payload.
+3. Write the **payload first**, then the **header**. The header is the
+   commit record: a torn payload write leaves the slot rejectable on the
+   next boot via CRC failure, and the other slot survives untouched.
+
+### Properties this gives us
+
+- **Power-loss safety.** Any interruption corrupts at most one slot; the
+  other survives. The boot path detects the corruption via CRC and
+  selects the survivor.
+- **Bit-flip detection.** EEPROM cell flips and torn writes both
+  manifest as CRC mismatches. Bit-flip false-negative probability is
+  `~2.3 × 10⁻¹⁰` per corrupted record — well below soft-error rates.
+- **Newer-wins resolution.** The `seq` counter resolves the "both valid"
+  case without ambiguity. `u32` wraps at ~4.3 billion writes (~130 years
+  at one write per second).
+- **No-dependency on configuration types.** The slot layer is reusable
+  for any opaque byte payload, not just configuration. It does not pull
+  in `config_types.h`.
+- **No dynamic allocation.** All RAM is caller-provided or stack-local.
+  The `crc32` lookup table (1 KB) is a single module-local array.
+- **Distinguishable storage errors.** If a `storage_read` fails during
+  the boot scan, `slot_pick_active` returns `SLOT_ERR_STORAGE` rather
+  than `SLOT_ERR_NO_VALID` — the caller knows the difference between
+  "blank EEPROM, load defaults" and "hardware is broken, raise an alarm".
+
+### CRC initialisation contract
+
+`crc32_init()` MUST be called once at single-threaded startup before any
+`crc32_compute` or `crc32_step` call. The implementation does not
+self-initialise: a lazy build of the 1 KB lookup table would race with
+readers in a multi-task system, even though the final table values are
+deterministic. After init the table is read-only and safe for
+concurrent access. Debug builds catch missed init via an assertion.
+
+In the test suite both `Crc32Test` and `SlotTest` fixtures call
+`crc32_init()` in their `SetUp`. The eventual `config_init()` will call
+it once before any task spawns.
+
+### What it does not give us
+
+- **Cryptographic integrity.** CRC catches accidental corruption, not
+  malicious tampering. If signed config is ever needed, HMAC-SHA256
+  replaces the CRC field; the slot protocol is otherwise unchanged.
+- **Atomicity at sub-record granularity.** A 2 KB payload spans multiple
+  EEPROM pages, and a torn write can leave some new bytes mixed with
+  some old. The CRC catches this — but recovery is "fall back to the
+  other slot", not "stitch the partial write together".
 
 ## API and threading
 

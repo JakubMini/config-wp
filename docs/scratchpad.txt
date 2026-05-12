@@ -22,6 +22,7 @@ b - human readable config file format - get it in, parse it
     - need error report struct on import so operator knows which record bombed
     - export buf param-provided not static, cleaner
 
+DONE!
 c - safe storage, conflict free
     - A/B dual slot. power loss mid-write only kills one
     - per-slot header: magic u32 | format_ver u16 | rsvd u16 | seq u32 | length u32 | crc32 u32
