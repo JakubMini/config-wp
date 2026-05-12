@@ -7,6 +7,7 @@ target_include_directories(application PUBLIC
 )
 
 target_link_libraries(application PUBLIC drivers)
+target_link_libraries(application PRIVATE project_warnings)
 
 # Only link FreeRTOS into the library when we're building the embedded app.
 # When BUILD_TESTING is on (host build), we deliberately skip it so the

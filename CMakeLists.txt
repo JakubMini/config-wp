@@ -10,7 +10,17 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
 endif()
 
-add_compile_options(-Wall -Wextra -Wpedantic)
+# Project-wide warning flags live on an INTERFACE library so we can opt our
+# own targets in to -Werror without forcing it onto fetched dependencies
+# (FreeRTOS-Kernel, GoogleTest) which tend not to compile clean under
+# -Wall -Wextra -Wpedantic.
+add_library(project_warnings INTERFACE)
+target_compile_options(project_warnings INTERFACE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
 
 option(BUILD_TESTING "Build unit tests with GoogleTest/GMock" OFF)
 option(BUILD_APP "Build the FreeRTOS application binary" ON)
@@ -42,6 +52,7 @@ if(BUILD_APP)
         drivers
         freertos_kernel
         pthread
+        project_warnings
     )
 endif()
 
