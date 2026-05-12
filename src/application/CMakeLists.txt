@@ -20,7 +20,10 @@ target_link_libraries(application PRIVATE project_warnings)
 # the FreeRTOS app (BUILD_APP) or the host test binary. Same .h, different
 # .c, so the manager code is identical across both builds.
 if(BUILD_APP)
-    target_sources(application PRIVATE config_lock_freertos.c)
+    target_sources(application PRIVATE
+        config_lock_freertos.c
+        eeprom_manager.c
+    )
     target_link_libraries(application PUBLIC freertos_kernel)
 else()
     target_sources(application PRIVATE config_lock_pthread.c)

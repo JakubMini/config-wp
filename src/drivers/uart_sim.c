@@ -16,9 +16,11 @@
  *              AT+SET_CONFIG\n<JSON...>
  *                  Everything after the first newline is treated as a
  *                  JSON patch. The driver calls config_import_json and,
- *                  on success, config_save (commit to storage).
- *                  Replies with the import report and "OK\n" or
- *                  "ERROR: ...\n".
+ *                  on success, calls config_queue_change() to ask the
+ *                  EEPROM Manager (the registered change-hook owner)
+ *                  to commit. Persistence runs out-of-band; the reply
+ *                  reports import counts and whether a consumer was
+ *                  registered to receive the change notification.
  *
  *          Unknown commands get "ERROR: unknown command\n".
  *****************************************************************************/
@@ -30,6 +32,7 @@
 
 #include "application/config.h"
 #include "application/config_json.h"
+#include "application/eeprom_manager.h"
 #include "config_print.h"
 
 #include <arpa/inet.h>
@@ -182,30 +185,19 @@ uart_sim_handle_set (int cfd, const char * payload, size_t payload_len)
         return;
     }
 
-    printf("[uart-sim] persisting cache to storage...\n");
-    config_status_t sst = config_save();
-    printf("[uart-sim] config_save -> %s\n", config_print_status(sst));
-    if (sst != CONFIG_OK)
-    {
-        char err[120];
-        int  n = snprintf(err,
-                         sizeof(err),
-                         "ERROR: save failed (%s)\n",
-                         config_print_status(sst));
-        if (n > 0)
-        {
-            (void)uart_sim_send_all(cfd, err, (size_t)n);
-        }
-        return;
-    }
+    printf("[uart-sim] queueing commit to EEPROM Manager...\n");
+    const bool queued = QueueConfigCommit();
+    printf("[uart-sim] QueueConfigCommit -> %s\n", queued ? "queued" : "FAIL");
 
-    char ok[160];
+    char ok[192];
     int  n = snprintf(ok,
                      sizeof(ok),
-                     "OK accepted=%u rejected=%u unknown_keys=%u\n",
+                     "OK accepted=%u rejected=%u unknown_keys=%u "
+                      "persist=%s\n",
                      (unsigned)rep.accepted,
                      (unsigned)rep.rejected,
-                     (unsigned)rep.unknown_keys);
+                     (unsigned)rep.unknown_keys,
+                     queued ? "queued" : "FAIL");
     if (n > 0)
     {
         (void)uart_sim_send_all(cfd, ok, (size_t)n);

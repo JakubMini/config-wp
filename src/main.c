@@ -7,7 +7,7 @@
 #include "task.h"
 
 #include "application/config.h"
-#include "drivers/storage.h"
+#include "application/eeprom_manager.h"
 #include "drivers/uart_sim.h"
 
 #include "config_print.h"
@@ -25,18 +25,9 @@ prvAppTask (void * pvParameters)
 {
     (void)pvParameters;
 
-    config_print_stage("stage 1: storage + config manager init");
-    storage_status_t sst = storage_init();
-    printf("[drv] storage_init -> %s\n", sst == STORAGE_OK ? "OK" : "ERR");
-    if (sst != STORAGE_OK)
-    {
-        /* No storage means config_init will fall back to defaults via the
-         * SLOT_ERR_STORAGE path. Demo continues so we can still show the
-         * defaults flow, but a real device would probably halt or fault. */
-        printf("[drv] continuing on defaults — slot reads will fail\n");
-    }
-    config_status_t st = config_init();
-    printf("[cfg] config_init -> %s\n", config_print_status(st));
+    config_print_stage("stage 1: cache populated by EEPROM Manager at boot");
+    /* eeprom_manager_init() ran before the scheduler started; it did
+     * storage_init + config_init, so the cache is already live. */
 
     config_print_system("after init");
     config_print_di(0);
@@ -44,6 +35,8 @@ prvAppTask (void * pvParameters)
 
     /* --- mutate --- */
     config_print_stage("stage 2: mutate one DI + system, then save");
+
+    config_status_t st;
 
     di_config_t di0;
     if (config_get_di(0, &di0) == CONFIG_OK)
@@ -70,18 +63,37 @@ prvAppTask (void * pvParameters)
     config_print_di(0);
     config_print_system("after mutation");
 
-    st = config_save();
-    printf("\n[cfg] config_save -> %s\n", config_print_status(st));
+    /* Persistence goes through the EEPROM Manager queue now — direct
+     * config_save() from a second task would race the manager's own
+     * save call and break the single-writer contract. */
+    const bool committed = QueueConfigCommit();
+    printf("[app] QueueConfigCommit -> %s\n", committed ? "queued" : "FAIL");
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-    /* --- reload --- */
-    config_print_stage("stage 3: reload from storage (simulates power cycle)");
+    /* --- piecewise change via QueueConfigChange --- */
+    config_print_stage(
+        "stage 3: piecewise field change via QueueConfigChange API");
 
-    config_deinit();
-    st = config_init();
-    printf("[cfg] config_init -> %s\n", config_print_status(st));
+    eeprom_value_t v  = { .u = 75 };
+    bool           ok = QueueConfigChange(EEPROM_TYPE_IO_DI,
+                                /*item=*/0,
+                                /*param=*/DI_PARAM_DEBOUNCE_MS,
+                                v);
+    printf("[app] QueueConfigChange(di[0].debounce_ms=75) -> %s\n",
+           ok ? "queued" : "FAIL");
 
+    v.u = 17;
+    ok  = QueueConfigChange(EEPROM_TYPE_SYSTEM,
+                           /*item=*/0,
+                           /*param=*/SYSTEM_PARAM_CANOPEN_NODE_ID,
+                           v);
+    printf("[app] QueueConfigChange(system.canopen_node_id=17) -> %s\n",
+           ok ? "queued" : "FAIL");
+
+    /* Let the manager coalesce + save (one slot write for both). */
+    vTaskDelay(pdMS_TO_TICKS(100));
     config_print_di(0);
-    config_print_system("after reload");
+    config_print_system("after piecewise");
 
     /* --- reset --- */
     config_print_stage(
@@ -148,6 +160,12 @@ main (void)
      * tear the process down cleanly. */
     signal(SIGINT, prvShutdownHandler);
     signal(SIGTERM, prvShutdownHandler);
+
+    /* EEPROM Manager runs first on boot: synchronously calls config_init
+     * so the cache is populated before any other task starts, then
+     * spawns the worker task that owns config_save going forward. */
+    config_status_t mst = eeprom_manager_init();
+    printf("[boot] eeprom_manager_init -> %s\n", config_print_status(mst));
 
     /* Spawn the external comms task + queue ahead of the scheduler so
      * the consumer is ready before any producer submits. */
