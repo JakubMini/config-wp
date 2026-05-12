@@ -11,6 +11,7 @@ target_link_libraries(unit_tests PRIVATE
     GTest::gtest
     GTest::gtest_main
     GTest::gmock
+    project_warnings
 )
 
 target_include_directories(unit_tests PRIVATE

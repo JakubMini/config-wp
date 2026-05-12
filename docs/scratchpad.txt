@@ -1,0 +1,160 @@
+problems to solve:
+
+a - general layout of various I/O pins, their functions, class/struct to hold those (data model)
+    - DI: name(16), id, debounce, fault state (hold/0/1)
+    - DO: name, id, fault state (hold/off/on)
+    - TC: name, id, tc type (J/K/T...), units (C/F), cjc on/off
+    - AI: name, id, scaling, filter time, fault state, 4-20mA 2/3-wire
+    - AO: name, id, slew, scaling, fault state
+    - PCNT: name, id, mode (count/freq), limit, edge
+    - PWM: name, id, period, duty, fault state (hold/off/on)
+    - system: node id, can bitrate, heartbeat, sync, nmt startup
+    - channel counts from hw diagram: 16 DI, 16 DO, 4 TC, 8 AI, 4 AO, 4 PCNT, 4 PWM
+    - fix in config_limits.h, single source of truth
+
+b - human readable config file format - get it in, parse it
+    - json wrapper for human, binary TLV for flash. cant be both
+    - json only at upload time, not in hot path
+    - cjson dep - single header + single c, MIT, ~10kb rom on m4
+    - import calls SAME validating setters as the c api. no duplicate validation
+    - shape: { "format":1, "system":{...}, "di":[...], "do":[...], ... }
+    - need error report struct on import so operator knows which record bombed
+    - export buf param-provided not static, cleaner
+
+c - safe storage, conflict free
+    - A/B dual slot. power loss mid-write only kills one
+    - per-slot header: magic u32 | format_ver u16 | rsvd u16 | seq u32 | length u32 | crc32 u32
+    - crc covers payload only
+    - highest seq wins, fall back to other slot if active corrupt
+    - both gone -> factory defaults from rom (in mcu flash, not eeprom)
+    - storage.c is memcpy stub now, real hw = spi eeprom (M95M02 or similar)
+    - crc32 iso-hdlc (zlib one), ~1kb table, runtime built at init
+
+d - architercture - non-blocking, threadsafe
+    - one mutex around the in-ram cache, all getters + setters take it
+    - hot readers (io thread) hit ram, never block on storage
+    - writes mark dirty, eeprom mgr thread drains to flash (matches fw diagram)
+    - NEVER hold mutex across a storage write (= spi io = ms+). copy out, release, write
+    - watch priority inversion: eeprom mgr low prio in diagram, if io thread takes
+      mutex mid-write... need to look at it
+    - concurrency test: N readers + 1 writer in posix tasks, 10s run, no tears/deadlocks
+
+e - CiA 401 stuff
+    - covers most IO config natively
+    - PCNT + PWM need extension into manufacturer-specific space (0x2000+ ish)
+    - need to pick our own object indices for those
+    - system config maps to DCF concept in canopen
+    - LSS slave - maybe, not strictly needed for the exercise
+    - heartbeat producer + emcy producer required for cia 301 compliance
+
+f - forward compat (easy to get wrong)
+    - old fw + new config -> skip unknown tags
+    - new fw + old config -> apply defaults for new fields
+    - rewrite-preserves-unknowns: if old fw rewrites a config with unknown fields,
+      those fields MUST survive. lots of impls drop them silently. dont do that.
+    - both directions need explicit tests
+
+g - piecewise vs monolithic updates
+    - tlv records makes this fall out for free
+    - piecewise = rewrite one tag, monolithic = rewrite whole blob
+    - both reduce to same encoder
+    - tag = (domain<<12) | (type<<8) | (index)
+
+h - validation / error detection
+    - per setter: range check every field
+    - on load: magic + format_ver + crc + length sanity
+    - enum vals cross-checked against known set
+    - name len bounded, null term enforced
+    - error codes explicit, not just OK/FAIL
+
+i - factory defaults
+    - static const table per type, in firmware
+    - used on: fresh eeprom, reset_defaults() call, new fields after fw upgrade
+    - 0xFF erased eeprom -> magic mismatch -> default load. explicitly test
+    - consider read-only defaults partition in mcu flash so totally hosed eeprom
+      still recovers
+
+j - dual/triple function IOs
+    - readme: "some I/Os may be dual/triple function"
+    - hw can do it (pin = DI or DO or PCNT depending on mux)
+    - approach 1: store all records, runtime picks based on "active function" field
+    - approach 2: single mux config "pin X -> function Y"
+    - lean toward 2, dont waste ram on inactive records
+    - need to think more about it
+
+k - portability / hal abstraction
+    - stm32g first, but must port to other vendor
+    - no OS abstraction, freertos stays
+    - hal layer wraps spi/i2c/gpio/tim/adc/dac
+    - storage interface already abstracted (storage.h) - good
+    - device drivers (eeprom, pca9555, max31856, rtc) should NOT depend on
+      stm32 hal directly, only on our hal wrapper
+
+l - testing
+    - types: sizeof + default values
+    - crc: known vectors against zlib
+    - slot: round-trip, corruption rejected, newer seq wins, both gone -> defaults
+    - tlv: round-trip each type, unknown tag preserved, malformed rejected
+    - config api: get-before-set returns default, set+get roundtrip, save+init+get
+      persistence, range errors rejected
+    - json: roundtrip equivalence, malformed rejected, partial vs full update,
+      error report points to bad record
+    - concurrency: N readers + 1 writer 10s, no tears/deadlocks
+    - forward compat both directions
+    - all under -Werror
+
+m - things i'm NOT doing this round
+    - no flash wear levelling (byte-write eeprom doesnt need it)
+    - no encryption / signing (factory trusted)
+    - no online schema migration (reject + reset)
+    - no LSS over CAN (not mandated)
+    - no DCF text export (binary + json wrapper is enough)
+    - no fw update verification (bootloader does it)
+    - no MISRA-C pass (would need extra 2 weeks)
+
+n - architercture critique (for writeup)
+    - power-of-10 rule 9 (no fn ptrs) vs fw-arch note "swap source via fn ptr".
+      tension. resolve via documented deviation in HAL only, or switch/dispatch
+    - I2C1 = eeprom + 4x pca9555 + rtc all on one bus. contention + spof.
+      move rtc to its own bus or make eeprom spi (matches diagram says spi already? double check)
+    - "any pin any direction" idea vs pca9555 which has port-level direction
+      (8-pin granularity). cant freely mix in/out within a port
+    - DCF in same eeprom as IO config -> one bad write loses CAN settings ->
+      device unreachable except via jtag. should be separate region OR hardcoded
+      fallback in mcu flash
+    - factory defaults location not specified in diagram. needs read-only
+      partition in mcu internal flash
+    - IFM-style current mon per channel for fault detection - cost vs value
+    - 24V/6A outputs could be mains relays directly - save smps headroom
+    - bootloader does secure boot + fw a/b. config a/b should align with that
+    - canopen thread doing fw-over-can: does it lock storage? coordinate with
+      eeprom mgr to avoid contention during fw flash
+
+o - loose ends / things to decide as i go
+    - format_ver = 1
+    - magic = 0xC0FC0FCA or similar
+    - tlv max payload = 256 bytes, can extend later
+    - actual eeprom size on target? need to size slots
+    - error reporting: just return code or also a logging hook? prob both
+    - cmakelists says c11. fine. barr-c is c99-or-newer
+    - stay portable, no gnu attribute reliance
+
+p - end-of-day must-have
+    - compiles + tests pass under -Werror in docker
+    - A/B failover working + tested
+    - piecewise + monolithic updates working
+    - json export/import roundtrip working
+    - at least one concurrency test
+    - design doc + writeup
+    - loom showing it run incl. operator-edits-json -> device-picks-up
+
+q - 2-week roadmap (writeup)
+    - transactional batches (apply N or none)
+    - fuzz the tlv parser (libfuzzer)
+    - MISRA-C / cppcheck pass + fix
+    - EDS/XDD generator from the schema
+    - real spi eeprom driver replacing memcpy stub
+    - wear levelling for flash-backed config
+    - runtime schema migration (v1 -> v2)
+    - signed config blobs (factory provisioning)
+    - HIL harness via comms thread

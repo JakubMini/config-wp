@@ -2,17 +2,20 @@
 
 #include "drivers/storage.h"
 
-config_status_t config_init( void )
+config_status_t
+config_init (void)
 {
     return CONFIG_OK;
 }
 
-config_status_t config_get( void )
+config_status_t
+config_get (void)
 {
     return CONFIG_OK;
 }
 
-config_status_t config_set( void )
+config_status_t
+config_set (void)
 {
     return CONFIG_OK;
 }

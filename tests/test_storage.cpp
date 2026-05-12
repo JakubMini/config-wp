@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
-extern "C" {
+extern "C"
+{
 #include "drivers/storage.h"
 }
 
-TEST(StorageTest, ReadAfterWriteReturnsSameBytes) {
+TEST(StorageTest, ReadAfterWriteReturnsSameBytes)
+{
     ASSERT_EQ(storage_init(), STORAGE_OK);
 
     const uint8_t in[] = { 0xDE, 0xAD, 0xBE, 0xEF };
@@ -15,7 +17,8 @@ TEST(StorageTest, ReadAfterWriteReturnsSameBytes) {
     EXPECT_EQ(0, memcmp(in, out, sizeof(in)));
 }
 
-TEST(StorageTest, OutOfRangeWriteRejected) {
+TEST(StorageTest, OutOfRangeWriteRejected)
+{
     ASSERT_EQ(storage_init(), STORAGE_OK);
 
     uint8_t b = 0;
