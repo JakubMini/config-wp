@@ -3,6 +3,7 @@ include(GoogleTest)
 add_executable(unit_tests
     test_config.cpp
     test_storage.cpp
+    test_types.cpp
 )
 
 target_link_libraries(unit_tests PRIVATE

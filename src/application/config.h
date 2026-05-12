@@ -9,6 +9,9 @@ extern "C"
 #include <stddef.h>
 #include <stdint.h>
 
+#include "application/config_defaults.h"
+#include "application/config_types.h"
+
 typedef enum
 {
     CONFIG_OK = 0,
