@@ -114,11 +114,14 @@ get_bytes (const uint8_t ** p, void * dst, size_t n)
     *p += n;
 }
 
-/* Common pre-checks. */
+/* Common pre-checks. `out_size` is included because every encode_*
+ * function unconditionally writes to *out_size on success — a NULL
+ * here would dereference. */
 static tlv_status_t
-check_encode (const void * in, void * buf, size_t cap, size_t need)
+check_encode (
+    const void * in, void * buf, size_t cap, size_t * out_size, size_t need)
 {
-    if (in == NULL || buf == NULL)
+    if (in == NULL || buf == NULL || out_size == NULL)
     {
         return TLV_ERR_BUF;
     }
@@ -153,7 +156,8 @@ config_codec_encode_di (const di_config_t * in,
                         size_t              cap,
                         size_t *            out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_DI_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_DI_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;
@@ -199,7 +203,8 @@ config_codec_encode_do (const do_config_t * in,
                         size_t              cap,
                         size_t *            out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_DO_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_DO_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;
@@ -241,7 +246,8 @@ config_codec_encode_tc (const tc_config_t * in,
                         size_t              cap,
                         size_t *            out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_TC_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_TC_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;
@@ -291,7 +297,8 @@ config_codec_encode_ai (const ai_config_t * in,
                         size_t              cap,
                         size_t *            out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_AI_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_AI_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;
@@ -343,7 +350,8 @@ config_codec_encode_ao (const ao_config_t * in,
                         size_t              cap,
                         size_t *            out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_AO_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_AO_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;
@@ -395,7 +403,8 @@ config_codec_encode_pcnt (const pcnt_config_t * in,
                           size_t                cap,
                           size_t *              out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_PCNT_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_PCNT_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;
@@ -441,7 +450,8 @@ config_codec_encode_pwm (const pwm_config_t * in,
                          size_t               cap,
                          size_t *             out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_PWM_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_PWM_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;
@@ -487,7 +497,8 @@ config_codec_encode_system (const system_config_t * in,
                             size_t                  cap,
                             size_t *                out_size)
 {
-    tlv_status_t st = check_encode(in, buf, cap, CONFIG_CODEC_SYSTEM_WIRE_SIZE);
+    tlv_status_t st
+        = check_encode(in, buf, cap, out_size, CONFIG_CODEC_SYSTEM_WIRE_SIZE);
     if (st != TLV_OK)
     {
         return st;

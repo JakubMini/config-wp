@@ -25,18 +25,37 @@ extern "C"
 
 namespace {
 
+/*
+ * Round-trip a struct through encode -> decode -> re-encode and assert
+ * the re-encoded byte stream matches the original byte stream.
+ *
+ * Comparing re-encoded BYTES rather than the raw struct memory avoids
+ * portability issues with struct padding: C struct assignment is
+ * allowed to leave padding bytes undefined, and `Struct out = {}`
+ * zero-fills padding — so memcmp(&in, &out, sizeof(Struct)) can spuriously
+ * fail across toolchains even when every field round-trips correctly.
+ *
+ * The byte-level check is also stronger: it pins the on-wire
+ * representation, which is the contract callers actually depend on.
+ */
 template<typename Encoder, typename Decoder, typename Struct>
 void
 round_trip (Encoder enc, Decoder dec, const Struct & in, size_t expected_size)
 {
-    uint8_t buf[64] = {};
-    size_t  size    = 0;
-    ASSERT_EQ(enc(&in, buf, sizeof(buf), &size), TLV_OK);
-    EXPECT_EQ(size, expected_size);
+    uint8_t buf_a[64] = {};
+    size_t  size_a    = 0;
+    ASSERT_EQ(enc(&in, buf_a, sizeof(buf_a), &size_a), TLV_OK);
+    EXPECT_EQ(size_a, expected_size);
 
-    Struct out = {};
-    ASSERT_EQ(dec(buf, size, &out), TLV_OK);
-    EXPECT_EQ(std::memcmp(&in, &out, sizeof(Struct)), 0);
+    Struct decoded = {};
+    ASSERT_EQ(dec(buf_a, size_a, &decoded), TLV_OK);
+
+    uint8_t buf_b[64] = {};
+    size_t  size_b    = 0;
+    ASSERT_EQ(enc(&decoded, buf_b, sizeof(buf_b), &size_b), TLV_OK);
+    EXPECT_EQ(size_b, size_a);
+    EXPECT_EQ(std::memcmp(buf_a, buf_b, size_a), 0)
+        << "encode -> decode -> encode must reproduce the wire bytes";
 }
 
 } // namespace
@@ -251,6 +270,20 @@ TEST(ConfigCodecDecode, TruncatedBufferRejected)
 
     di_config_t out = {};
     EXPECT_EQ(config_codec_decode_di(buf, size - 1, &out), TLV_ERR_TRUNCATED);
+}
+
+TEST(ConfigCodecEncode, NullOutSizeRejected)
+{
+    /* Every encode_* writes to *out_size unconditionally on success.
+     * A NULL out_size must be rejected up front rather than
+     * dereferenced. */
+    uint8_t buf[64] = {};
+    EXPECT_EQ(
+        config_codec_encode_di(&g_di_defaults[0], buf, sizeof(buf), nullptr),
+        TLV_ERR_BUF);
+    EXPECT_EQ(config_codec_encode_system(
+                  &g_system_defaults, buf, sizeof(buf), nullptr),
+              TLV_ERR_BUF);
 }
 
 TEST(ConfigCodecDecode, NameAlwaysNullTerminated)

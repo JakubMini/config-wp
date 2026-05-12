@@ -79,6 +79,21 @@ TEST(TlvWriter, NullValueWithLenRejected)
     EXPECT_EQ(tlv_writer_emit(&w, 0x0001u, nullptr, 4u), TLV_ERR_BUF);
 }
 
+TEST(TlvWriter, NullBufferReturnsErrBuf)
+{
+    /* Writer init'd with a NULL backing buffer must report TLV_ERR_BUF
+     * (the documented semantics), not the misleading TLV_ERR_NO_SPACE
+     * that would fall out of the capacity check. */
+    tlv_writer_t w;
+    tlv_writer_init(&w, nullptr, 0u);
+    const uint8_t value = 0x55;
+    EXPECT_EQ(tlv_writer_emit(&w, 0x0001u, &value, 1u), TLV_ERR_BUF);
+    EXPECT_EQ(tlv_writer_emit(&w, 0x0001u, nullptr, 0u), TLV_ERR_BUF);
+
+    const uint8_t raw[] = { 0x01, 0x00, 0x00, 0x00 };
+    EXPECT_EQ(tlv_writer_emit_raw(&w, raw, sizeof(raw)), TLV_ERR_BUF);
+}
+
 TEST(TlvWriter, ZeroLengthValueIsLegal)
 {
     /* A zero-length record (4-byte header, no payload) is a valid TLV. */

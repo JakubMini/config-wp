@@ -116,6 +116,14 @@ tlv_writer_emit (tlv_writer_t * w,
                  size_t         value_len)
 {
     assert(w != NULL);
+    /* Explicit buffer-state check first so a writer init'd with a NULL
+     * buf or zero cap reports TLV_ERR_BUF (matching the documented
+     * semantics) rather than the misleading TLV_ERR_NO_SPACE that
+     * would otherwise fall out of the capacity check below. */
+    if (w->buf == NULL || w->cap == 0u)
+    {
+        return TLV_ERR_BUF;
+    }
     if (value == NULL && value_len != 0u)
     {
         return TLV_ERR_BUF;
@@ -143,6 +151,10 @@ tlv_status_t
 tlv_writer_emit_raw (tlv_writer_t * w, const void * record, size_t total_len)
 {
     assert(w != NULL);
+    if (w->buf == NULL || w->cap == 0u)
+    {
+        return TLV_ERR_BUF;
+    }
     if (record == NULL || total_len < TLV_HEADER_BYTES)
     {
         return TLV_ERR_BUF;
