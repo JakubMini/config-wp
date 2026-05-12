@@ -71,6 +71,7 @@ if(BUILD_APP)
         src/main.c
         src/config_print.c
         src/external_comms.c
+        src/drivers/uart_sim.c
     )
     target_link_libraries(config_wp PRIVATE
         application

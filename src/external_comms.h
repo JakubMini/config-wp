@@ -24,10 +24,12 @@
  *          consumer to drain before reusing — currently observed via
  *          task delay; a done-semaphore handshake can be retrofitted.
  *
- *          Persistence: this layer does NOT call config_save(). The
- *          cache changes are in-RAM only after submit. Callers commit
- *          to flash separately when they want — typically one save
- *          after a series of patches, not one per patch.
+ *          Persistence: after a successful import the consumer task
+ *          calls config_save() so the change reaches the storage
+ *          backing (EEPROM/flash). This keeps the operator-facing
+ *          "submit a patch over UART" flow end-to-end without forcing
+ *          every caller to remember to commit. Failed imports do NOT
+ *          touch storage.
  *****************************************************************************/
 
 #ifndef EXTERNAL_COMMS_H

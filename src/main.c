@@ -7,8 +7,8 @@
 #include "task.h"
 
 #include "application/config.h"
-#include "application/config_json.h"
 #include "drivers/storage.h"
+#include "drivers/uart_sim.h"
 
 #include "config_print.h"
 #include "external_comms.h"
@@ -120,36 +120,15 @@ prvAppTask (void * pvParameters)
 
     config_print_di(9);
 
-    /* Persistence is a separate concern from import. The comms task
-     * never auto-saves — we commit explicitly after a batch of patches. */
-    st = config_save();
-    printf(
-        "\n[cfg] config_save -> %s "
-        "(committed external patches to flash)\n",
-        config_print_status(st));
-
-    /* --- json export --- */
-    config_print_stage("stage 6: export current cache as JSON");
-
-    static char export_buf[8192];
-    size_t      written = 0;
-    st = config_export_json(export_buf, sizeof(export_buf), &written);
-    printf("[json] config_export_json -> %s (%zu bytes)\n",
-           config_print_status(st),
-           written);
-    if (st == CONFIG_OK)
-    {
-        fputs(export_buf, stdout);
-        fputc('\n', stdout);
-    }
+    /* The comms task auto-saves on successful import, so no explicit
+     * config_save() is needed here — stage 3's reload demo already
+     * proved the storage round-trip works. */
 
     /* --- idle loop --- */
     config_print_stage("idle: demo complete, task tick once a second");
 
-    unsigned tick = 0;
     for (;;)
     {
-        printf("[app] idle tick %u\n", tick++);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -173,6 +152,10 @@ main (void)
     /* Spawn the external comms task + queue ahead of the scheduler so
      * the consumer is ready before any producer submits. */
     external_comms_init();
+
+    /* Spawn the simulated-UART listener (TCP :5555). Host side:
+     *   nc -q1 localhost 5555 < examples/config.json                  */
+    uart_sim_init(5555);
 
     BaseType_t rc = xTaskCreate(
         prvAppTask, "app", APP_TASK_STACK, NULL, APP_TASK_PRIORITY, NULL);

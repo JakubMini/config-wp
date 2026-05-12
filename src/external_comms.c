@@ -76,8 +76,25 @@ ext_task (void * pv)
         }
 
         config_import_report_t rep = { 0 };
-        config_status_t        st = config_import_json(msg.json, msg.len, &rep);
+        printf("[ext] importing JSON patch (%zu bytes)...\n", msg.len);
+        config_status_t st = config_import_json(msg.json, msg.len, &rep);
         ext_log_report(st, &rep);
+
+        /* Persist immediately on a successful import so the operator
+         * can see the EEPROM/storage path exercise itself end-to-end.
+         * Partial-accept (some records rejected) still counts as a
+         * successful overall import — the manager already filtered out
+         * the bad records, so what's in RAM is worth committing. */
+        if (st == CONFIG_OK)
+        {
+            printf("[ext] persisting cache to storage...\n");
+            config_status_t sst = config_save();
+            printf("[ext] config_save -> %s\n", config_print_status(sst));
+        }
+        else
+        {
+            printf("[ext] skipping config_save (import not OK)\n");
+        }
     }
 }
 
