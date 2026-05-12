@@ -1,0 +1,60 @@
+name: CI
+
+# Runs on every PR that targets main, plus pushes to main as a smoke check.
+# Two jobs run in parallel:
+#   - format-check: verifies all .c/.h/.cpp/.hpp under src/ and tests/ are
+#     clang-format clean against the .clang-format at the repo root.
+#   - tests: builds the Dockerfile.test image and runs ctest inside it,
+#     which is the same flow developers run locally.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  format-check:
+    name: clang-format check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format
+          clang-format --version
+
+      - name: Verify formatting
+        run: |
+          set -euo pipefail
+          # -print0 / -0 pipe so the command works under any POSIX shell
+          # (avoids bash 4's mapfile, which isn't on every runner image).
+          count=$(find src tests \
+              \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) \
+              -print | wc -l)
+          if [ "${count}" -eq 0 ]; then
+            echo "no source files found"
+            exit 1
+          fi
+          echo "checking ${count} files"
+          find src tests \
+              \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) \
+              -print0 | xargs -0 clang-format --dry-run -Werror
+
+  tests:
+    name: unit tests (Dockerfile.test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        run: docker build -f Dockerfile.test -t config-wp-test .
+
+      - name: Run tests
+        run: docker run --rm config-wp-test

@@ -8,28 +8,34 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
-extern "C" {
+extern "C"
+{
 #include "application/config.h"
 #include "drivers/storage.h"
 }
 
-class ConfigTest : public ::testing::Test {
+class ConfigTest : public ::testing::Test
+{
 protected:
-    void SetUp() override {
+    void SetUp () override
+    {
         ASSERT_EQ(storage_init(), STORAGE_OK);
         ASSERT_EQ(config_init(), CONFIG_OK);
     }
 };
 
-TEST_F(ConfigTest, InitIsIdempotent) {
+TEST_F(ConfigTest, InitIsIdempotent)
+{
     EXPECT_EQ(config_init(), CONFIG_OK);
     EXPECT_EQ(config_init(), CONFIG_OK);
 }
 
-TEST_F(ConfigTest, StubGetReturnsOK) {
+TEST_F(ConfigTest, StubGetReturnsOK)
+{
     EXPECT_EQ(config_get(), CONFIG_OK);
 }
 
-TEST_F(ConfigTest, StubSetReturnsOK) {
+TEST_F(ConfigTest, StubSetReturnsOK)
+{
     EXPECT_EQ(config_set(), CONFIG_OK);
 }
