@@ -46,7 +46,10 @@ if(BUILD_APP)
     add_subdirectory(src/drivers)
     add_subdirectory(src/application)
 
-    add_executable(config_wp src/main.c)
+    add_executable(config_wp
+        src/main.c
+        src/config_print.c
+    )
     target_link_libraries(config_wp PRIVATE
         application
         drivers

@@ -14,9 +14,14 @@ target_include_directories(application PUBLIC
 target_link_libraries(application PUBLIC drivers)
 target_link_libraries(application PRIVATE project_warnings)
 
-# Only link FreeRTOS into the library when we're building the embedded app.
-# When BUILD_TESTING is on (host build), we deliberately skip it so the
-# application code can be unit-tested without the kernel.
+# Select the right config_lock backing based on whether we're building
+# the FreeRTOS app (BUILD_APP) or the host test binary. Same .h, different
+# .c, so the manager code is identical across both builds.
 if(BUILD_APP)
+    target_sources(application PRIVATE config_lock_freertos.c)
     target_link_libraries(application PUBLIC freertos_kernel)
+else()
+    target_sources(application PRIVATE config_lock_pthread.c)
+    find_package(Threads REQUIRED)
+    target_link_libraries(application PUBLIC Threads::Threads)
 endif()

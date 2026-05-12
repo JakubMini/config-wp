@@ -48,7 +48,7 @@ range-init so bumping a count scales without per-index edits.
 | `ao_config_t`     | name, id, output_mode, slew_per_s, scale_num, scale_den, offset, fault_state, fault_value | 48 |
 | `pcnt_config_t`   | name, id, mode, edge, limit, reset_on_read | 36 |
 | `pwm_config_t`    | name, id, period_us, duty_permille, fault_state, fault_duty_permille | 36 |
-| `system_config_t` | canopen_node_id, can_bitrate, heartbeat_ms, sync_window_us, nmt_startup, producer_emcy_cob_id | 20 |
+| `system_config_t` | canopen_node_id, can_bitrate, heartbeat_ms, sync_window_us, nmt_startup, producer_emcy_cob_id | 24 |
 
 ### Notable field choices
 
@@ -71,6 +71,50 @@ range-init so bumping a count scales without per-index edits.
   generalises to predefined PDO COB-IDs.
 - **`io_domain_t`** — stable top-level enum (`DI=0..PWM=6`); append-only
   so older firmware can read newer configs.
+
+### CANopen OD alignment
+
+`system_config_t` field widths match the OD object widths so the
+eventual CANopen-stack thread can map cache members directly onto OD
+entries without a translation layer:
+
+| field | OD index | width | notes |
+| --- | --- | --- | --- |
+| `canopen_node_id`        | —      | u8  | LSS bits / addressing; not an OD object itself |
+| `can_bitrate`            | —      | enum (u8 on wire) | LSS sub-objects, manufacturer-specific |
+| `heartbeat_ms`           | 0x1017 | u16 | Producer Heartbeat Time (ms) |
+| `sync_window_us`         | 0x1007 | u32 | Synchronous Window Length (µs) |
+| `nmt_startup`            | 0x2xxx | enum | manufacturer-specific |
+| `producer_emcy_cob_id`   | 0x1014 | u32 | bit 31 = valid (0)/disabled (1); bit 30 = 11-bit (0)/29-bit (1); bits 28..0 = COB-ID |
+
+IO records follow the same alignment: `name`, `id` (u16 OD index), and
+typed-enum fields map onto the CiA 401 generic-I/O object groups. The
+hand-rolled `(domain, index)` TLV tag scheme falls one mapping short of
+the OD `(index, subindex)` pair — a future codec layer can dispatch tag
+→ OD entry directly.
+
+**Gaps from CiA 401 today** (deferred to the writeup roadmap):
+
+- **PDO communication parameters** — OD `0x1400..0x15FF` (RPDO comm),
+  `0x1800..0x19FF` (TPDO comm). Each defines a COB-ID, transmission
+  type, inhibit time, event timer, and SYNC start value for one PDO.
+  CiA 401 mandates four default TPDOs (DI / AI groups) and four
+  default RPDOs (DO / AO groups).
+- **PDO mapping parameters** — OD `0x1600..0x17FF` (RPDO mapping),
+  `0x1A00..0x1BFF` (TPDO mapping). Each defines which OD entries
+  (and which bit slices of them) get packed into the PDO's CAN payload.
+- **Error behaviour** — OD `0x1029` (Error Behaviour Object) for
+  EMCY-handling policy.
+- **Identity / device-info objects** — `0x1000`, `0x1008..0x100A`,
+  `0x1018` — mostly static, can be compile-time constants rather than
+  cache fields.
+
+The natural shape for PDO support is a `pdo_config_t` per PDO and a
+`pdo_mapping_t` per PDO, both as arrays inside `system_config_t` (or a
+sibling `canopen_pdo_config_t` if size becomes a problem). The TLV
+codec / manager already handles arrays of fixed-size records — adding
+PDOs is a structural copy of the existing IO record pattern, not new
+infrastructure.
 
 ### Factory defaults (`config_defaults.{h,c}`)
 
@@ -254,7 +298,7 @@ unrecognised domains cleanly. Tag space = 65536 records.
 | DI | 23 | AO   | 38 |
 | DO | 20 | PCNT | 25 |
 | TC | 26 | PWM  | 27 |
-| AI | 38 | System | 9 |
+| AI | 38 | System | 13 |
 
 Wire size is **deliberately decoupled** from `sizeof(struct)`: the
 encoder writes field-by-field with explicit widths, so struct padding
@@ -364,9 +408,97 @@ moving to automation.
 
 ---
 
-## API and threading
+## Manager API and threading
 
-_(to follow as the manager API goes in.)_
+```
+src/application/
+  config.{h,c}             public API + cache + save/load
+  config_lock.h            abstract mutex
+  config_lock_freertos.c   FreeRTOS impl (BUILD_APP=ON)
+  config_lock_pthread.c    pthread impl (host tests)
+```
+
+Single layer callers touch. Public API is 16 getter/setter pairs +
+`config_init` / `config_save` / `config_reset_defaults` /
+`config_deinit`.
+
+### Module state
+
+| symbol | purpose | size |
+| --- | --- | --- |
+| `s_cache`        | POD: 7 IO arrays + `system_config_t` | ~2 KB |
+| `s_unknown[]`    | raw bytes of TLV records init didn't recognise; re-emitted by save | 1 KB |
+| `s_blob_buf[]`   | scratch for slot read on init / encode on save | `SLOT_PAYLOAD_MAX_BYTES` |
+| `s_initialised`  | guard: every public call short-circuits with `CONFIG_ERR_NOT_INITIALISED` if false | bool |
+| `config_lock`    | mutex protecting `s_cache` and `s_unknown` (non-recursive) | — |
+
+### Lock abstraction
+
+Four functions: `config_lock_create / take / give / destroy`. Same
+`.h`, two `.c` impls, CMake picks one. Manager code is byte-identical
+across both builds. FreeRTOS impl uses `xSemaphoreCreateMutex` (priority
+inheritance); pthread impl wraps `pthread_mutex_t`.
+
+### Concurrency contract
+
+- **Many readers, many setters** — all serialised by the mutex.
+- **`config_save` is single-writer** — caller contract; in the FW
+  architecture only the EEPROM Manager calls it. `s_blob_buf` is owned
+  by the in-flight save until `slot_write` returns.
+- **Mutex is NEVER held across `slot_write`** — encode under lock,
+  release, write outside. Lock-hold time is a memcpy (µs) not an SPI
+  transaction (ms); the IO task can read config between page writes.
+  This is the most important threading discipline in the manager.
+- **Non-recursive** — public API must not call public API while
+  holding the lock. Internal `*_locked` helpers handle the
+  already-locked path.
+
+### Lifecycle
+
+**`config_init`** — `crc32_init` → `config_lock_create` → load
+defaults → mark initialised → `slot_pick_active`:
+- `SLOT_OK` → decode blob, known tags into `s_cache`, unknown tags
+  into `s_unknown`
+- `SLOT_ERR_NO_VALID` → defaults stand, return OK
+- `SLOT_ERR_STORAGE` → defaults stand, return `CONFIG_ERR_STORAGE`
+
+Idempotent. `config_deinit` forces a reload.
+
+**`config_save`** — encode `s_cache` + `s_unknown` into `s_blob_buf`
+under the lock, release lock, `slot_write` outside.
+
+**`config_reset_defaults`** — reload defaults under the lock. Does
+NOT persist; call `config_save` to commit.
+
+### Getter/setter shape
+
+Both halves of every pair follow the same template:
+
+```c
+get: init-check → null-check → bounds-check → take → copy out → give
+set: init-check → null-check → bounds-check → validate → take → copy in → give
+```
+
+Validators enforce the data-model rules: enum range via `_COUNT`
+sentinels, AI/AO `scale_den != 0`, PWM `duty_permille ≤ 1000`, system
+`canopen_node_id in 1..127`, `producer_emcy_cob_id == 0` (sentinel) OR
+`>= 0x81` (override), `name` null-termination.
+
+### Unknown-record preservation
+
+The codec is type-agnostic; the manager owns the policy.
+
+- **Init**: records with a known domain *and* in-range index go to
+  `s_cache`. Everything else — unknown domain, out-of-range index —
+  goes verbatim into `s_unknown` via `tlv_writer_emit`.
+- **Save**: known records emitted from `s_cache` via the codec; then
+  `s_unknown` is walked as raw bytes and re-emitted via
+  `tlv_writer_emit_raw`. Unknown records survive byte-for-byte.
+
+The codec gives forward-compatible *parsing* (skip); the manager gives
+forward-compatible *persistence* (round-trip). On `s_unknown` overflow
+new records are silently dropped — `s_unknown` is 1 KB, well over the
+expected one-or-two future record types.
 
 ## Human-readable layer
 

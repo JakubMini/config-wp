@@ -507,9 +507,9 @@ config_codec_encode_system (const system_config_t * in,
     put_u8(&p, in->canopen_node_id);
     put_u8(&p, (uint8_t)in->can_bitrate);
     put_u16(&p, in->heartbeat_ms);
-    put_u16(&p, in->sync_window_us);
+    put_u32(&p, in->sync_window_us); /* OD 0x1007 width: UNSIGNED32 */
     put_u8(&p, (uint8_t)in->nmt_startup);
-    put_u16(&p, in->producer_emcy_cob_id);
+    put_u32(&p, in->producer_emcy_cob_id); /* OD 0x1014 width: UNSIGNED32 */
     assert((size_t)(p - (uint8_t *)buf) == CONFIG_CODEC_SYSTEM_WIRE_SIZE);
     *out_size = CONFIG_CODEC_SYSTEM_WIRE_SIZE;
     return TLV_OK;
@@ -528,8 +528,8 @@ config_codec_decode_system (const void * buf, size_t len, system_config_t * out)
     out->canopen_node_id      = get_u8(&p);
     out->can_bitrate          = (can_bitrate_t)get_u8(&p);
     out->heartbeat_ms         = get_u16(&p);
-    out->sync_window_us       = get_u16(&p);
+    out->sync_window_us       = get_u32(&p);
     out->nmt_startup          = (nmt_startup_t)get_u8(&p);
-    out->producer_emcy_cob_id = get_u16(&p);
+    out->producer_emcy_cob_id = get_u32(&p);
     return TLV_OK;
 }

@@ -90,7 +90,7 @@ config_codec_tag_index (uint16_t tag)
 #define CONFIG_CODEC_AO_WIRE_SIZE     38u
 #define CONFIG_CODEC_PCNT_WIRE_SIZE   25u
 #define CONFIG_CODEC_PWM_WIRE_SIZE    27u
-#define CONFIG_CODEC_SYSTEM_WIRE_SIZE 9u
+#define CONFIG_CODEC_SYSTEM_WIRE_SIZE 13u
 
 /* --------------------------------------------------------------------- */
 /* Per-type encoders / decoders                                          */

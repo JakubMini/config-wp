@@ -32,6 +32,7 @@ c - safe storage, conflict free
     - storage.c is memcpy stub now, real hw = spi eeprom (M95M02 or similar)
     - crc32 iso-hdlc (zlib one), ~1kb table, runtime built at init
 
+
 d - architercture - non-blocking, threadsafe
     - one mutex around the in-ram cache, all getters + setters take it
     - hot readers (io thread) hit ram, never block on storage
@@ -49,6 +50,7 @@ e - CiA 401 stuff
     - LSS slave - maybe, not strictly needed for the exercise
     - heartbeat producer + emcy producer required for cia 301 compliance
 
+DONE!
 f - forward compat (easy to get wrong)
     - old fw + new config -> skip unknown tags
     - new fw + old config -> apply defaults for new fields
@@ -63,6 +65,29 @@ g - piecewise vs monolithic updates
     - both reduce to same encoder
     - tag = (domain<<12) | (type<<8) | (index)
 
+g2 - canopen OD width alignment
+    - heartbeat_ms: matches 0x1017 (UNSIGNED16, ms) ✓
+    - sync_window_us: was u16, FIXED -> u32 (matches 0x1007 UNSIGNED32)
+    - producer_emcy_cob_id: was u16, FIXED -> u32 (matches 0x1014, has
+      valid-bit (b31), 11/29-bit (b30), COB-ID (b28..0))
+    - canopen_node_id (u8): not an OD object, used to derive cob-ids
+    - nmt_startup: manufacturer specific (0x2xxx), enum is fine
+    - system wire size grew 9 -> 13 bytes (still well under slot cap)
+
+g3 - PDO gaps (NOT in scope, writeup roadmap item)
+    - 0x1400..0x15FF RPDO comm params: COB-ID, txtype, inhibit, evt, sync-start
+    - 0x1600..0x17FF RPDO mapping: which OD entries pack into each PDO
+    - 0x1800..0x19FF TPDO comm params: same as RPDO comm but for transmit
+    - 0x1A00..0x1BFF TPDO mapping: same as RPDO mapping but for transmit
+    - cia 401 mandates 4 default TPDOs (DI/AI) and 4 default RPDOs (DO/AO)
+    - 0x1029 Error Behaviour Object (EMCY handling policy)
+    - shape: pdo_config_t / pdo_mapping_t as arrays inside system_config_t
+      (or sibling canopen_pdo_config_t). TLV codec already handles arrays
+      of fixed-size records — additive, no new infrastructure
+    - 0x1000, 0x1008..0x100A, 0x1018 device-info objects can be
+      compile-time constants, not cache fields
+
+DONE!
 h - validation / error detection
     - per setter: range check every field
     - on load: magic + format_ver + crc + length sanity
@@ -70,6 +95,7 @@ h - validation / error detection
     - name len bounded, null term enforced
     - error codes explicit, not just OK/FAIL
 
+DONE!
 i - factory defaults
     - static const table per type, in firmware
     - used on: fresh eeprom, reset_defaults() call, new fields after fw upgrade
@@ -113,7 +139,7 @@ m - things i'm NOT doing this round
     - no LSS over CAN (not mandated)
     - no DCF text export (binary + json wrapper is enough)
     - no fw update verification (bootloader does it)
-    - no MISRA-C pass (would need extra 2 weeks)
+    - no MISRA-C pass or any other form of code compliance (would need extra 2 weeks)
 
 n - architercture critique (for writeup)
     - power-of-10 rule 9 (no fn ptrs) vs fw-arch note "swap source via fn ptr".
